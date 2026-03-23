@@ -27,6 +27,21 @@ go.work.sum
 # env file
 .env
 
-# Editor/IDE
-# .idea/
-# .vscode/
+# OS files
+.DS_Store
+Thumbs.db
+
+# VS Code
+.vscode/
+*.code-workspace
+
+# Docker / Persistence
+.docker/
+data/
+pgdata/
+redisdata/
+prometheus_data/
+grafana_data/
+
+# Project Guide
+GUIDE.md
