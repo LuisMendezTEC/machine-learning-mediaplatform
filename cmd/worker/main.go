@@ -14,7 +14,7 @@ func main() {
 	q := queue.New(os.Getenv("REDIS_ADDR"), os.Getenv("REDIS_PASSWORD"))
 	_ = q
 
-	// TODO (Person 2): implementar goroutine pool + FFmpeg
+	// TODO (Person 2): Implement goroutine pool + FFmpeg
 	log.Println("[worker] ready — task execution not yet implemented")
 	select {}
 }

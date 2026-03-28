@@ -50,6 +50,13 @@ func Migrate(db *sql.DB) error {
 		last_seen    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 	);
 
+	CREATE TABLE IF NOT EXISTS worker_registry (
+		id          TEXT PRIMARY KEY,
+		hostname    TEXT NOT NULL,
+		status      TEXT NOT NULL DEFAULT 'idle',
+		last_seen   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+	);
+
 	CREATE INDEX IF NOT EXISTS idx_jobs_status   ON jobs(status);
 	CREATE INDEX IF NOT EXISTS idx_jobs_worker   ON jobs(worker_id);
 	CREATE INDEX IF NOT EXISTS idx_jobs_priority ON jobs(priority DESC);

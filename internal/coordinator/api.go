@@ -44,6 +44,10 @@ func (a *API) Router() http.Handler {
 	mux.HandleFunc("GET /stats", a.getStats)
 	mux.HandleFunc("GET /ws", a.hub.ServeWS)
 
+	mux.HandleFunc("POST /jobs/{id}/progress", a.jobProgress)
+	mux.HandleFunc("POST /jobs/{id}/complete", a.jobComplete)
+	mux.HandleFunc("POST /jobs/{id}/fail", a.jobFail)
+
 	return mux
 }
 
@@ -184,4 +188,43 @@ func (a *API) getStats(w http.ResponseWriter, r *http.Request) {
 	stats, _ := db.GetStats(a.db)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(stats)
+}
+
+func (a *API) jobProgress(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var payload struct {
+		Progress int `json:"progress"`
+	}
+	json.NewDecoder(r.Body).Decode(&payload)
+	a.db.Exec(`UPDATE jobs SET progress=$1 WHERE id=$2`, payload.Progress, id)
+	w.WriteHeader(http.StatusOK)
+}
+
+func (a *API) jobComplete(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var payload struct {
+		ResultURL string `json:"result_url"`
+	}
+	json.NewDecoder(r.Body).Decode(&payload)
+	now := time.Now()
+	a.db.Exec(
+		`UPDATE jobs SET status='completed', progress=100, result_url=$1, completed_at=$2 WHERE id=$3`,
+		payload.ResultURL, now, id,
+	)
+	log.Printf("[api] job %s completed, result: %s", id, payload.ResultURL)
+	w.WriteHeader(http.StatusOK)
+}
+
+func (a *API) jobFail(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var payload struct {
+		ErrorMsg string `json:"error_msg"`
+	}
+	json.NewDecoder(r.Body).Decode(&payload)
+	a.db.Exec(
+		`UPDATE jobs SET status='failed', error_msg=$1 WHERE id=$2`,
+		payload.ErrorMsg, id,
+	)
+	log.Printf("[api] job %s failed: %s", id, payload.ErrorMsg)
+	w.WriteHeader(http.StatusOK)
 }

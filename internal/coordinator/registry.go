@@ -1,6 +1,8 @@
 package coordinator
 
 import (
+	"database/sql"
+	"log"
 	"sync"
 	"time"
 
@@ -9,30 +11,56 @@ import (
 
 const heartbeatTimeout = 15 * time.Second
 
-// Registry maintains the state of all registered workers.
-// It's thread-safe — multiple goroutines read and write to it.
-
 type Registry struct {
 	mu      sync.RWMutex
 	workers map[string]*models.WorkerInfo
+	db      *sql.DB
 }
 
-func NewRegistry() *Registry {
-	return &Registry{
+func NewRegistry(db *sql.DB) *Registry {
+	r := &Registry{
 		workers: make(map[string]*models.WorkerInfo),
+		db:      db,
+	}
+	r.loadFromDB() // recupera workers al reiniciar
+	return r
+}
+
+// loadFromDB recupera workers registrados recientemente al arrancar.
+func (r *Registry) loadFromDB() {
+	rows, err := r.db.Query(`
+		SELECT id, hostname FROM worker_registry
+		WHERE last_seen > NOW() - INTERVAL '1 minute'`)
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+	for rows.Next() {
+		w := &models.WorkerInfo{}
+		rows.Scan(&w.ID, &w.Hostname)
+		w.LastSeen = time.Now()
+		w.Status = "idle"
+		r.workers[w.ID] = w
+		log.Printf("[registry] recovered worker from DB: %s", w.ID)
 	}
 }
 
-// Register adds or updates a worker.
 func (r *Registry) Register(w *models.WorkerInfo) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	w.LastSeen = time.Now()
 	w.Status = "idle"
 	r.workers[w.ID] = w
+
+	// Persistir en DB para sobrevivir reinicios
+	r.db.Exec(`
+		INSERT INTO worker_registry (id, hostname, last_seen)
+		VALUES ($1, $2, NOW())
+		ON CONFLICT (id) DO UPDATE SET hostname=$2, last_seen=NOW()`,
+		w.ID, w.Hostname,
+	)
 }
 
-// Heartbeat updates the timestamp and metrics of a worker.
 func (r *Registry) Heartbeat(id string, cpu, mem float64, activeJobs int) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -49,17 +77,16 @@ func (r *Registry) Heartbeat(id string, cpu, mem float64, activeJobs int) bool {
 	} else {
 		w.Status = "busy"
 	}
+
+	// Actualizar timestamp en DB
+	r.db.Exec(`
+		UPDATE worker_registry SET last_seen=NOW() WHERE id=$1`, id)
 	return true
 }
-
-// LeastLoaded returns the worker with the least current load.
-// Criteria: fewest active jobs; tiebreaker by CPU%.
-// Returns nil if no workers are available.
 
 func (r *Registry) LeastLoaded() *models.WorkerInfo {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-
 	var best *models.WorkerInfo
 	for _, w := range r.workers {
 		if !r.isAlive(w) {
@@ -78,20 +105,16 @@ func (r *Registry) LeastLoaded() *models.WorkerInfo {
 	return best
 }
 
-// All returns a copy of all workers (alive and dead).
 func (r *Registry) All() []*models.WorkerInfo {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	list := make([]*models.WorkerInfo, 0, len(r.workers))
 	for _, w := range r.workers {
-		copy := *w
-		list = append(list, &copy)
+		cp := *w
+		list = append(list, &cp)
 	}
 	return list
 }
-
-// EvictStale removes workers that haven't sent a heartbeat recently.
-// It's called periodically by the scheduler.
 
 func (r *Registry) EvictStale() []string {
 	r.mu.Lock()
@@ -106,7 +129,6 @@ func (r *Registry) EvictStale() []string {
 	return evicted
 }
 
-// isAlive checks if a worker is considered alive based on its last heartbeat.
 func (r *Registry) isAlive(w *models.WorkerInfo) bool {
 	return time.Since(w.LastSeen) < heartbeatTimeout
 }

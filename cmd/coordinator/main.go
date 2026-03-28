@@ -35,7 +35,7 @@ func main() {
 	log.Println("[coordinator] queue ready")
 
 	// ── Inicializar componentes ────────────────────────────────────────────
-	registry := coordinator.NewRegistry()
+	registry := coordinator.NewRegistry(database)
 	hub := coordinator.NewHub()
 	scheduler := coordinator.NewScheduler(q, registry, database)
 	api := coordinator.NewAPI(q, registry, hub, database)
