@@ -30,3 +30,21 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
+=======
+# OS files
+.DS_Store
+Thumbs.db
+
+*.code-workspace
+
+# Docker / Persistence
+.docker/
+data/
+pgdata/
+redisdata/
+prometheus_data/
+grafana_data/
+
+# Project Guide
+GUIDE.md
+MANUAL_DE_COLABORADOR_MEDIAPLATFORM.txt
