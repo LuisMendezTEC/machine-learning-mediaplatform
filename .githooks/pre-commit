@@ -1,0 +1,37 @@
+﻿#!/bin/sh
+# MediaPlatform pre-commit hook
+# Se instala con: make hooks
+
+echo "Running pre-commit checks..."
+
+# 1. No commitear .env real
+if git diff --cached --name-only | grep -q "^\.env$"; then
+  echo "ERROR: Intentando commitear .env — agrega .env al .gitignore"
+  exit 1
+fi
+
+# 2. Compilar
+echo "  Checking build..."
+if ! go build ./... 2>&1; then
+  echo "ERROR: go build fallo — corrige los errores antes de commitear"
+  exit 1
+fi
+
+# 3. Vet (análisis estático)
+echo "  Running go vet..."
+if ! go vet ./... 2>&1; then
+  echo "ERROR: go vet reporto problemas — revisalos antes de commitear"
+  exit 1
+fi
+
+# 4. Formato
+echo "  Checking formatting..."
+UNFORMATTED=cmd\client\main.go cmd\coordinator\main.go cmd\worker\main.go internal\coordinator\api.go internal\coordinator\registry.go internal\coordinator\scheduler.go internal\coordinator\ws.go internal\db\db.go internal\models\job.go internal\queue\queue.go
+if [ -n "" ]; then
+  echo "ERROR: Estos archivos necesitan formato (corre 'make fmt'):"
+  echo ""
+  exit 1
+fi
+
+echo "Pre-commit checks passed!"
+exit 0
