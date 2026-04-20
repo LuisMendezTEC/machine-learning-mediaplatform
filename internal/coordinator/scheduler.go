@@ -84,8 +84,20 @@ func (s *Scheduler) dispatch(ctx context.Context) error {
 
 	// Send the job to the worker over HTTP.
 	if err := s.sendToWorker(ctx, worker, job); err != nil {
+		if strings.Contains(err.Error(), "returned 429") {
+			log.Printf("[scheduler] worker %s is full, re-queueing job %s without incrementing retries", worker.ID, job.ID)
+			// Re-enqueue without incrementing retries
+			if err := s.queue.Enqueue(ctx, job); err != nil {
+				log.Printf("[scheduler] re-enqueue failed for job %s: %v", job.ID, err)
+			}
+			s.updateJobStatus(job.ID, models.StatusPending, "")
+			// Sleep a bit to allow workers to clear up
+			time.Sleep(500 * time.Millisecond)
+			return nil
+		}
+
 		log.Printf("[scheduler] failed to send job %s to worker %s: %v", job.ID, worker.ID, err)
-		// Re-enqueue so another worker can take it.
+		// Re-enqueue so another worker can take it (this increments retries).
 		s.requeueJob(ctx, job)
 		s.updateJobStatus(job.ID, models.StatusPending, "")
 		return nil

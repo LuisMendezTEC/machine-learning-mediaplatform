@@ -96,6 +96,8 @@ services:
       MINIO_ACCESS_KEY: minioadmin
       MINIO_SECRET_KEY: minioadmin
       MINIO_BUCKET: results
+    volumes:
+      - ./dataset:/app/dataset:ro
     depends_on:
       - coordinator
 
@@ -114,6 +116,8 @@ services:
       MINIO_ACCESS_KEY: minioadmin
       MINIO_SECRET_KEY: minioadmin
       MINIO_BUCKET: results
+    volumes:
+      - ./dataset:/app/dataset:ro
     depends_on:
       - coordinator
 
@@ -132,6 +136,8 @@ services:
       MINIO_ACCESS_KEY: minioadmin
       MINIO_SECRET_KEY: minioadmin
       MINIO_BUCKET: results
+    volumes:
+      - ./dataset:/app/dataset:ro
     depends_on:
       - coordinator
 

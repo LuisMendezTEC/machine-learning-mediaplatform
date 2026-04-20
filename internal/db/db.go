@@ -93,7 +93,7 @@ func ListJobs(db *sql.DB, status string) ([]*models.Job, error) {
 		query += " WHERE status=$1"
 		args = append(args, status)
 	}
-	query += " ORDER BY created_at DESC LIMIT 200"
+	query += " ORDER BY created_at DESC LIMIT 2000"
 	rows, err := db.Query(query, args...)
 	if err != nil {
 		return nil, err
