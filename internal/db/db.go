@@ -132,9 +132,18 @@ func scanJob(row interface {
 	Scan(...any) error
 }) (*models.Job, error) {
 	j := &models.Job{}
-	return j, row.Scan(
+	var workerID, errorMsg, resultURL sql.NullString
+	err := row.Scan(
 		&j.ID, &j.FilePath, &j.Operation, &j.Status, &j.Priority,
-		&j.WorkerID, &j.Progress, &j.ErrorMsg, &j.ResultURL,
+		&workerID, &j.Progress, &errorMsg, &resultURL,
 		&j.Retries, &j.MaxRetries, &j.CreatedAt, &j.StartedAt, &j.CompletedAt,
 	)
+	if err != nil {
+		return nil, err
+	}
+	j.WorkerID = workerID.String
+	j.ErrorMsg = errorMsg.String
+	j.ResultURL = resultURL.String
+	return j, nil
 }
+

@@ -10,12 +10,19 @@ import (
 	"golang.org/x/net/websocket"
 )
 
+// QueueDepthSnapshot holds the count of pending messages per priority stream.
+type QueueDepthSnapshot struct {
+	High   int `json:"high"`
+	Normal int `json:"normal"`
+	Low    int `json:"low"`
+}
+
 // SystemSnapshot is what gets sent to the dashboard every second.
 type SystemSnapshot struct {
-	Workers    interface{} `json:"workers"`
-	Jobs       interface{} `json:"jobs"`
-	QueueDepth interface{} `json:"queue_depth"`
-	Stats      interface{} `json:"stats"`
+	Workers    interface{}        `json:"workers"`
+	Jobs       interface{}        `json:"jobs"`
+	QueueDepth QueueDepthSnapshot `json:"queue_depth"`
+	Stats      interface{}        `json:"stats"`
 }
 
 // Hub manages all active WebSocket connections.

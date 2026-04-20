@@ -2,9 +2,9 @@
 // Test client: single job submission and batch/concurrent load testing.
 // Usage:
 //
-//	Single:  ./client -op convert -file /path/to/video.mp4 -priority 5
-//	Batch:   ./client -batch -manifest dataset/manifest.json -concurrency 50
-//	Watch:   ./client -watch -job <job-id>
+//	Single:  ./client -file /path/to/video.mp4 -op convert -priority 5 -watch
+//	Batch:   ./client -batch -manifest dataset/manifest.json -concurrency 50 -watch
+//	Stats:   ./client -stats
 package main
 
 import (
@@ -86,6 +86,21 @@ func getJob(coordinatorURL, jobID string) (*jobResponse, error) {
 	return &job, nil
 }
 
+func listJobs(coordinatorURL, status string) ([]jobResponse, error) {
+	url := coordinatorURL + "/jobs"
+	if status != "" {
+		url += "?status=" + status
+	}
+	resp, err := http.Get(url)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	var jobs []jobResponse
+	json.NewDecoder(resp.Body).Decode(&jobs)
+	return jobs, nil
+}
+
 // ── Single job mode ───────────────────────────────────────────────────────────
 
 func runSingle(coordinatorURL, filePath, operation string, priority int, watch bool) {
@@ -110,10 +125,10 @@ func runSingle(coordinatorURL, filePath, operation string, priority int, watch b
 	}
 
 	fmt.Printf("\nWatching job %s...\n", job.ID)
-	watchJob(coordinatorURL, job.ID)
+	watchSingleJob(coordinatorURL, job.ID)
 }
 
-func watchJob(coordinatorURL, jobID string) {
+func watchSingleJob(coordinatorURL, jobID string) {
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
 	lastStatus := ""
@@ -141,7 +156,7 @@ func watchJob(coordinatorURL, jobID string) {
 
 // ── Batch mode ────────────────────────────────────────────────────────────────
 
-func runBatch(coordinatorURL, manifestPath string, concurrency int, priorityOverride int) {
+func runBatch(coordinatorURL, manifestPath string, concurrency, priorityOverride int, watch bool) {
 	raw, err := os.ReadFile(manifestPath)
 	if err != nil {
 		log.Fatalf("Cannot read manifest %s: %v", manifestPath, err)
@@ -168,11 +183,13 @@ func runBatch(coordinatorURL, manifestPath string, concurrency int, priorityOver
 		total, len(m.Files), concurrency)
 
 	var (
-		submitted int64
-		failed    int64
-		wg        sync.WaitGroup
-		sem       = make(chan struct{}, concurrency)
-		start     = time.Now()
+		submitted    int64
+		submitFailed int64
+		jobIDs       []string
+		mu           sync.Mutex
+		wg           sync.WaitGroup
+		sem          = make(chan struct{}, concurrency)
+		start        = time.Now()
 	)
 
 	for i, t := range tasks {
@@ -184,23 +201,30 @@ func runBatch(coordinatorURL, manifestPath string, concurrency int, priorityOver
 
 			priority := priorityOverride
 			if priority == 0 {
-				priority = 5 // default normal
+				priority = 5
 			}
 
-			_, err := submitJob(coordinatorURL, submitRequest{
+			job, err := submitJob(coordinatorURL, submitRequest{
 				FilePath:  tk.file.Path,
 				Operation: tk.op,
 				Priority:  priority,
 			})
 			if err != nil {
-				atomic.AddInt64(&failed, 1)
-				fmt.Printf("  [%4d/%d] ❌ FAILED  %s %s: %v\n", idx+1, total, tk.op, tk.file.Filename, err)
+				atomic.AddInt64(&submitFailed, 1)
+				fmt.Printf("  [%4d/%d] ❌ SUBMIT FAILED  %s %s: %v\n",
+					idx+1, total, tk.op, tk.file.Filename, err)
 				return
 			}
+
+			mu.Lock()
+			jobIDs = append(jobIDs, job.ID)
+			mu.Unlock()
+
 			n := atomic.AddInt64(&submitted, 1)
 			if n%10 == 0 || int(n) == total {
 				fmt.Printf("  [%4d/%d] submitted %d/%d (%.1f jobs/s)\n",
-					idx+1, total, n, total, float64(n)/time.Since(start).Seconds())
+					idx+1, total, n, total,
+					float64(n)/time.Since(start).Seconds())
 			}
 		}(i, t)
 	}
@@ -208,11 +232,107 @@ func runBatch(coordinatorURL, manifestPath string, concurrency int, priorityOver
 	wg.Wait()
 	elapsed := time.Since(start)
 
-	fmt.Printf("\n── Batch complete ──────────────────────────────\n")
-	fmt.Printf("  Submitted: %d\n", submitted)
-	fmt.Printf("  Failed:    %d\n", failed)
-	fmt.Printf("  Time:      %s\n", elapsed.Round(time.Millisecond))
-	fmt.Printf("  Rate:      %.1f jobs/s\n", float64(submitted)/elapsed.Seconds())
+	fmt.Printf("\n── Submission complete ──────────────────────────\n")
+	fmt.Printf("  Submitted:       %d\n", submitted)
+	fmt.Printf("  Submit failures: %d\n", submitFailed)
+	fmt.Printf("  Time:            %s\n", elapsed.Round(time.Millisecond))
+	if submitted > 0 {
+		fmt.Printf("  Rate:            %.1f jobs/s\n",
+			float64(submitted)/elapsed.Seconds())
+	}
+
+	if watch && len(jobIDs) > 0 {
+		fmt.Printf("\nWatching %d jobs until all finish...\n\n", len(jobIDs))
+		watchAllJobs(coordinatorURL, jobIDs)
+	} else if len(jobIDs) > 0 {
+		fmt.Println("\nTip: run with -watch to poll until all jobs finish.")
+	}
+}
+
+// watchAllJobs polls /jobs every 2 seconds and prints a live summary line
+// until every submitted job is completed or failed.
+func watchAllJobs(coordinatorURL string, jobIDs []string) {
+	// Build a lookup set so we only track OUR jobs, not leftover ones in the DB
+	idSet := make(map[string]bool, len(jobIDs))
+	for _, id := range jobIDs {
+		idSet[id] = true
+	}
+
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+	start := time.Now()
+
+	// Track per-job processing times for the final report
+	type jobMeta struct {
+		startedAt   time.Time
+		completedAt time.Time
+		operation   string
+	}
+	durations := make(map[string]jobMeta)
+
+	for range ticker.C {
+		all, err := listJobs(coordinatorURL, "")
+		if err != nil {
+			fmt.Printf("  poll error: %v\n", err)
+			continue
+		}
+
+		counts := map[string]int{
+			"pending":   0,
+			"assigned":  0,
+			"running":   0,
+			"completed": 0,
+			"failed":    0,
+		}
+
+		var failedJobs []jobResponse
+
+		for _, j := range all {
+			if !idSet[j.ID] {
+				continue
+			}
+			counts[j.Status]++
+			if j.Status == "failed" {
+				failedJobs = append(failedJobs, j)
+			}
+		}
+
+		total := len(jobIDs)
+		done := counts["completed"] + counts["failed"]
+		elapsed := time.Since(start).Round(time.Second)
+
+		fmt.Printf(
+			"  [%6s] pending=%-4d assigned=%-4d running=%-4d completed=%-4d failed=%-4d  (%d/%d done)\n",
+			elapsed,
+			counts["pending"],
+			counts["assigned"],
+			counts["running"],
+			counts["completed"],
+			counts["failed"],
+			done, total,
+		)
+
+		if done == total {
+			// Final report
+			fmt.Printf("\n── All %d jobs finished ─────────────────────────\n", total)
+			fmt.Printf("  ✅ Completed:   %d\n", counts["completed"])
+			fmt.Printf("  ❌ Failed:      %d\n", counts["failed"])
+			fmt.Printf("  Total time:    %s\n", elapsed)
+			if counts["completed"] > 0 {
+				fmt.Printf("  Throughput:    %.2f jobs/s\n",
+					float64(counts["completed"])/time.Since(start).Seconds())
+			}
+			if len(failedJobs) > 0 {
+				fmt.Println("\n  Failed job details:")
+				for _, j := range failedJobs {
+					fmt.Printf("    %s  op=%-15s  error=%s\n",
+						j.ID[:8], j.Operation, j.ErrorMsg)
+				}
+			}
+			_ = durations
+			return
+		}
+	}
 }
 
 // ── Stats mode ────────────────────────────────────────────────────────────────
@@ -249,22 +369,26 @@ func runStats(coordinatorURL string) {
 // ── main ──────────────────────────────────────────────────────────────────────
 
 func main() {
-	// Flags
-	coordinatorURL := flag.String("coordinator", "", "Coordinator URL (default: $COORDINATOR_URL or http://localhost:8080)")
+	coordinatorURL := flag.String("coordinator", "",
+		"Coordinator URL (default: $COORDINATOR_URL or http://localhost:8080)")
 
 	// Single job flags
 	filePath := flag.String("file", "", "Path to the input file")
 	operation := flag.String("op", "convert", "Operation: convert | extract_audio | thumbnail")
 	priority := flag.Int("priority", 5, "Job priority 1-10 (10=highest)")
-	watch := flag.Bool("watch", false, "Poll until the job finishes")
+	watch := flag.Bool("watch", false,
+		"Poll until the single job (or all batch jobs) finish")
 
 	// Batch flags
 	batch := flag.Bool("batch", false, "Enable batch mode (reads -manifest)")
-	manifestPath := flag.String("manifest", "dataset/manifest.json", "Path to dataset manifest.json")
-	concurrency := flag.Int("concurrency", 20, "Number of concurrent submissions in batch mode")
+	manifestPath := flag.String("manifest", "dataset/manifest.json",
+		"Path to dataset manifest.json")
+	concurrency := flag.Int("concurrency", 20,
+		"Number of concurrent submissions in batch mode")
 
 	// Stats flag
-	statsMode := flag.Bool("stats", false, "Print system stats and worker list, then exit")
+	statsMode := flag.Bool("stats", false,
+		"Print system stats and worker list, then exit")
 
 	flag.Parse()
 
@@ -284,16 +408,13 @@ func main() {
 		runStats(url)
 
 	case *batch:
-		if *manifestPath == "" {
-			log.Fatal("batch mode requires -manifest <path>")
-		}
-		runBatch(url, *manifestPath, *concurrency, *priority)
+		runBatch(url, *manifestPath, *concurrency, *priority, *watch)
 
 	default:
 		if *filePath == "" {
 			fmt.Println("Usage:")
 			fmt.Println("  Single job:  client -file <path> -op <operation> [-priority N] [-watch]")
-			fmt.Println("  Batch load:  client -batch -manifest dataset/manifest.json [-concurrency 50]")
+			fmt.Println("  Batch load:  client -batch -manifest dataset/manifest.json [-concurrency 50] [-watch]")
 			fmt.Println("  Stats:       client -stats")
 			fmt.Println("\nOperations: convert | extract_audio | thumbnail")
 			os.Exit(1)
