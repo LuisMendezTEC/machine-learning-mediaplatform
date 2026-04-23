@@ -196,6 +196,8 @@ func (w *worker) processJob(ctx context.Context, job jobAssignment) {
 		resultPath, opErr = multimedia.ExtractAudio(ctx, job.FilePath, progressCB)
 	case string(models.OpThumbnail):
 		resultPath, opErr = multimedia.Thumbnail(ctx, job.FilePath, progressCB)
+	case string(models.OpConvertAudio):
+		resultPath, opErr = multimedia.ConvertAudio(ctx, job.FilePath, progressCB)
 	default:
 		opErr = fmt.Errorf("operación desconocida: %s", job.Operation)
 	}
@@ -303,7 +305,7 @@ func (w *worker) register() error {
 }
 
 func (w *worker) heartbeatLoop(ctx context.Context) {
-	ticker := time.NewTicker(5 * time.Second)
+	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
 	for {
 		select {
@@ -314,9 +316,10 @@ func (w *worker) heartbeatLoop(ctx context.Context) {
 			active := w.active
 			w.mu.Unlock()
 
+			cpu, mem := monitoring.GetSystemStats()
 			payload := map[string]interface{}{
-				"cpu_percent": 15.5,
-				"mem_percent": 25.0,
+				"cpu_percent": cpu,
+				"mem_percent": mem,
 				"active_jobs": active,
 			}
 			body, _ := json.Marshal(payload)

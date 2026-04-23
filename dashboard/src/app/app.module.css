@@ -16,6 +16,7 @@
     position: sticky;
     top: 0;
     z-index: 10;
+    gap: 16px;
 }
 
 .headerLeft {
@@ -102,6 +103,23 @@
     color: var(--muted);
 }
 
+.refreshBtn {
+    margin-left: auto;
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    font-size: 12px;
+    padding: 4px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+
+.refreshBtn:hover {
+    color: var(--text);
+    border-color: var(--accent);
+}
+
 /* ── Worker grid ── */
 .workerGrid {
     display: grid;
@@ -121,4 +139,48 @@
     padding: 1px 6px;
     border-radius: 4px;
     font-size: 12px;
+}
+
+/* ── Tab navigation ── */
+.tabs {
+    display: flex;
+    gap: 2px;
+    flex: 1;
+    justify-content: center;
+}
+
+.tab {
+    background: transparent;
+    border: none;
+    color: var(--muted);
+    padding: 6px 18px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 500;
+    transition: all 0.15s;
+}
+
+.tab:hover {
+    color: var(--text);
+    background: var(--border);
+}
+
+.tabActive {
+    color: var(--text);
+    background: var(--border);
+}
+
+/* ── Submit page two-column grid ── */
+.submitGrid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    align-items: start;
+}
+
+@media (max-width: 900px) {
+    .submitGrid {
+        grid-template-columns: 1fr;
+    }
 }

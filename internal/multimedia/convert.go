@@ -80,6 +80,21 @@ func scanLines(data []byte, atEOF bool) (advance int, token []byte, err error) {
 	return 0, nil, nil
 }
 
+// probeHasStream returns true if the file contains at least one stream of the
+// given type. streamType is "v" for video or "a" for audio.
+// Uses ffprobe, which ships with every ffmpeg Alpine package.
+func probeHasStream(ctx context.Context, inputPath, streamType string) bool {
+	cmd := exec.CommandContext(ctx, "ffprobe",
+		"-v", "error",
+		"-select_streams", streamType+":0",
+		"-show_entries", "stream=codec_type",
+		"-of", "default=noprint_wrappers=1:nokey=1",
+		inputPath,
+	)
+	out, _ := cmd.Output()
+	return strings.TrimSpace(string(out)) != ""
+}
+
 // outputPath crea una ruta de salida única en /tmp con la extensión dada.
 func outputPath(inputPath, ext string) string {
 	dir := os.TempDir()
@@ -91,6 +106,10 @@ func outputPath(inputPath, ext string) string {
 // Convert convierte inputPath a MP4 usando H.264 + AAC.
 // Retorna la ruta del archivo de salida y cualquier error.
 func Convert(ctx context.Context, inputPath string, cb progressFn) (string, error) {
+	if !probeHasStream(ctx, inputPath, "v") {
+		return "", fmt.Errorf("convert: input has no video stream — use an audio operation instead")
+	}
+
 	out := outputPath(inputPath, ".mp4")
 	log.Printf("[convert] %s → %s", inputPath, out)
 

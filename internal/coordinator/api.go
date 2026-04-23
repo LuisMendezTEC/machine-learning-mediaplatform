@@ -3,8 +3,12 @@ package coordinator
 import (
 	"database/sql"
 	"encoding/json"
+	"io"
 	"log"
 	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/LuisMendezTEC/mediaplatform.git/internal/db"
@@ -43,6 +47,12 @@ func (a *API) Router() http.Handler {
 	// Stats + WebSocket
 	mux.HandleFunc("GET /stats", a.getStats)
 	mux.HandleFunc("GET /ws", a.hub.ServeWS)
+
+	// File upload (for manual submission UI)
+	mux.HandleFunc("POST /upload", a.uploadFile)
+
+	// File browser (for batch UI)
+	mux.HandleFunc("GET /files", a.listFiles)
 
 	mux.HandleFunc("POST /jobs/{id}/progress", a.jobProgress)
 	mux.HandleFunc("POST /jobs/{id}/complete", a.jobComplete)
@@ -193,10 +203,23 @@ func (a *API) getStats(w http.ResponseWriter, r *http.Request) {
 func (a *API) jobProgress(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	var payload struct {
-		Progress int `json:"progress"`
+		Progress  int    `json:"progress"`
+		Status    string `json:"status"`
+		ResultURL string `json:"result_url"`
+		ErrorMsg  string `json:"error"`
 	}
 	json.NewDecoder(r.Body).Decode(&payload)
-	a.db.Exec(`UPDATE jobs SET progress=$1 WHERE id=$2`, payload.Progress, id)
+
+	if payload.Status == string(models.StatusCompleted) {
+		a.db.Exec(`UPDATE jobs SET status='completed', progress=100, result_url=$1, completed_at=NOW() WHERE id=$2`, payload.ResultURL, id)
+	} else if payload.Status == string(models.StatusFailed) {
+		a.db.Exec(`UPDATE jobs SET status='failed', progress=$1, error_msg=$2, completed_at=NOW() WHERE id=$3`, payload.Progress, payload.ErrorMsg, id)
+	} else if payload.Status != "" {
+		a.db.Exec(`UPDATE jobs SET status=$1, progress=$2 WHERE id=$3`, payload.Status, payload.Progress, id)
+	} else {
+		a.db.Exec(`UPDATE jobs SET progress=$1 WHERE id=$2`, payload.Progress, id)
+	}
+	
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -227,4 +250,186 @@ func (a *API) jobFail(w http.ResponseWriter, r *http.Request) {
 	)
 	log.Printf("[api] job %s failed: %s", id, payload.ErrorMsg)
 	w.WriteHeader(http.StatusOK)
+}
+
+// ── File upload ───────────────────────────────────────────────────────────────
+
+func (a *API) uploadFile(w http.ResponseWriter, r *http.Request) {
+	const maxMemory = 32 << 20 // 32 MB max in RAM, rest on disk
+	if err := r.ParseMultipartForm(maxMemory); err != nil {
+		http.Error(w, "cannot parse form: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		http.Error(w, "missing file field", http.StatusBadRequest)
+		return
+	}
+	defer file.Close()
+
+	datasetPath := os.Getenv("DATASET_PATH")
+	if datasetPath == "" {
+		datasetPath = "/app/dataset/files"
+	}
+	if err := os.MkdirAll(datasetPath, 0755); err != nil {
+		http.Error(w, "cannot create dataset dir", http.StatusInternalServerError)
+		return
+	}
+
+	// Sanitise: only keep the base name, reject any path traversal.
+	safeName := filepath.Base(header.Filename)
+	if safeName == "." || safeName == "/" {
+		http.Error(w, "invalid filename", http.StatusBadRequest)
+		return
+	}
+	destPath := filepath.Join(datasetPath, safeName)
+
+	dst, err := os.Create(destPath)
+	if err != nil {
+		http.Error(w, "cannot create file: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer dst.Close()
+
+	if _, err := io.Copy(dst, file); err != nil {
+		http.Error(w, "write error: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	log.Printf("[api] uploaded file %s → %s", header.Filename, destPath)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"path":     destPath,
+		"filename": safeName,
+	})
+}
+
+// ── File browser ───────────────────────────────────────────────────────────────
+
+type fileItem struct {
+	Filename  string `json:"filename"`
+	Path      string `json:"path"`
+	Type      string `json:"type"`
+	Format    string `json:"format"`
+	SizeBytes int64  `json:"size_bytes"`
+}
+
+func (a *API) listFiles(w http.ResponseWriter, r *http.Request) {
+	folderPath := r.URL.Query().Get("path")
+	if folderPath == "" {
+		folderPath = "/app/dataset/files"
+	}
+
+	// Prevent path traversal
+	if strings.Contains(folderPath, "..") {
+		http.Error(w, "invalid path", http.StatusBadRequest)
+		return
+	}
+
+	// Try to load a manifest.json from the parent dir, then the dir itself.
+	type manifestEntry struct {
+		Filename string `json:"filename"`
+		Type     string `json:"type"`
+		Format   string `json:"format"`
+	}
+	type manifestDoc struct {
+		Files []manifestEntry `json:"files"`
+	}
+
+	index := make(map[string]manifestEntry)
+	manifestFound := false
+
+	for _, mp := range []string{
+		filepath.Join(filepath.Dir(folderPath), "manifest.json"),
+		filepath.Join(folderPath, "manifest.json"),
+	} {
+		raw, err := os.ReadFile(mp)
+		if err != nil {
+			continue
+		}
+		var m manifestDoc
+		if json.Unmarshal(raw, &m) == nil {
+			for _, f := range m.Files {
+				index[f.Filename] = f
+			}
+			manifestFound = true
+			break
+		}
+	}
+
+	entries, err := os.ReadDir(folderPath)
+	if err != nil {
+		http.Error(w, "cannot read directory: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	var files []fileItem
+	videoCount, audioCount := 0, 0
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if name == "manifest.json" {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil {
+			continue
+		}
+		item := fileItem{
+			Filename:  name,
+			Path:      filepath.Join(folderPath, name),
+			SizeBytes: info.Size(),
+		}
+		if mf, ok := index[name]; ok {
+			item.Type = mf.Type
+			item.Format = mf.Format
+		} else {
+			item.Type = guessFileType(name)
+			item.Format = strings.TrimPrefix(strings.ToLower(filepath.Ext(name)), ".")
+		}
+		if item.Type == "video" {
+			videoCount++
+		} else {
+			audioCount++
+		}
+		files = append(files, item)
+	}
+
+	if files == nil {
+		files = []fileItem{}
+	}
+
+	resp := struct {
+		FolderPath    string     `json:"folder_path"`
+		ManifestFound bool       `json:"manifest_found"`
+		Total         int        `json:"total"`
+		VideoCount    int        `json:"video_count"`
+		AudioCount    int        `json:"audio_count"`
+		Files         []fileItem `json:"files"`
+	}{
+		FolderPath:    folderPath,
+		ManifestFound: manifestFound,
+		Total:         len(files),
+		VideoCount:    videoCount,
+		AudioCount:    audioCount,
+		Files:         files,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
+var videoExts = map[string]bool{
+	".mp4": true, ".mkv": true, ".avi": true, ".mov": true, ".webm": true,
+}
+
+func guessFileType(filename string) string {
+	if videoExts[strings.ToLower(filepath.Ext(filename))] {
+		return "video"
+	}
+	return "audio"
 }

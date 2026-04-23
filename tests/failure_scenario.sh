@@ -42,7 +42,7 @@ SUBMIT_RESP=$(curl -s -X POST "$COORDINATOR/batch" \
   -H "Content-Type: application/json" \
   -d "$BATCH")
 
-JOB_COUNT=$(echo "$SUBMIT_RESP" | python3 -c "import sys,json; print(len(json.load(sys.stdin)))" 2>/dev/null || echo "0")
+JOB_COUNT=$(echo "$SUBMIT_RESP" | python -c "import sys,json; print(len(json.load(sys.stdin)))" 2>/dev/null || echo "0")
 
 if [ "$JOB_COUNT" -eq 10 ]; then
   ok "Submitted $JOB_COUNT jobs successfully"
@@ -59,7 +59,7 @@ RUNNING=0
 for i in $(seq 1 15); do
   sleep 1
   RUNNING=$(curl -s "$COORDINATOR/jobs?status=running" | \
-    python3 -c "import sys,json; print(len(json.load(sys.stdin)))" 2>/dev/null || echo "0")
+    python -c "import sys,json; print(len(json.load(sys.stdin)))" 2>/dev/null || echo "0")
   log "  attempt $i/15 — running jobs: $RUNNING"
   if [ "$RUNNING" -gt 0 ]; then
     break
@@ -78,7 +78,7 @@ echo ""
 echo "▶ Step 3: Identify an active worker"
 
 ACTIVE_WORKER=$(curl -s "$COORDINATOR/jobs?status=running" | \
-  python3 -c "
+  python -c "
 import sys, json
 jobs = json.load(sys.stdin)
 workers = [j['worker_id'] for j in jobs if j.get('worker_id')]
@@ -111,7 +111,7 @@ EVICTED=false
 for i in $(seq 1 30); do
   sleep 1
   WORKER_STATUS=$(curl -s "$COORDINATOR/workers" | \
-    python3 -c "
+    python -c "
 import sys, json, time
 workers = json.load(sys.stdin)
 for w in workers:
@@ -141,14 +141,14 @@ echo "▶ Step 6: Verify jobs reclaimed back to pending"
 
 sleep 3
 PENDING=$(curl -s "$COORDINATOR/jobs?status=pending" | \
-  python3 -c "import sys,json; print(len(json.load(sys.stdin)))" 2>/dev/null || echo "0")
+  python -c "import sys,json; print(len(json.load(sys.stdin)))" 2>/dev/null || echo "0")
 
 if [ "$PENDING" -gt 0 ]; then
   ok "$PENDING jobs reclaimed to pending"
 else
   # They may have already been picked up by another worker
   RUNNING_NOW=$(curl -s "$COORDINATOR/jobs?status=running" | \
-    python3 -c "import sys,json; print(len(json.load(sys.stdin)))" 2>/dev/null || echo "0")
+    python -c "import sys,json; print(len(json.load(sys.stdin)))" 2>/dev/null || echo "0")
   if [ "$RUNNING_NOW" -gt 0 ]; then
     ok "Jobs already picked up by another worker ($RUNNING_NOW running)"
   else
@@ -174,13 +174,13 @@ ALL_DONE=false
 for i in $(seq 1 60); do
   sleep 2
   COMPLETED=$(curl -s "$COORDINATOR/stats" | \
-    python3 -c "import sys,json; s=json.load(sys.stdin); print(s.get('completed',0))" 2>/dev/null || echo "0")
+    python -c "import sys,json; s=json.load(sys.stdin); print(s.get('completed',0))" 2>/dev/null || echo "0")
   FAILED=$(curl -s "$COORDINATOR/stats" | \
-    python3 -c "import sys,json; s=json.load(sys.stdin); print(s.get('failed',0))" 2>/dev/null || echo "0")
+    python -c "import sys,json; s=json.load(sys.stdin); print(s.get('failed',0))" 2>/dev/null || echo "0")
   STILL_RUNNING=$(curl -s "$COORDINATOR/jobs?status=running" | \
-    python3 -c "import sys,json; print(len(json.load(sys.stdin)))" 2>/dev/null || echo "0")
+    python -c "import sys,json; print(len(json.load(sys.stdin)))" 2>/dev/null || echo "0")
   STILL_PENDING=$(curl -s "$COORDINATOR/jobs?status=pending" | \
-    python3 -c "import sys,json; print(len(json.load(sys.stdin)))" 2>/dev/null || echo "0")
+    python -c "import sys,json; print(len(json.load(sys.stdin)))" 2>/dev/null || echo "0")
 
   log "  [${i}0s] completed=$COMPLETED  failed=$FAILED  running=$STILL_RUNNING  pending=$STILL_PENDING"
 

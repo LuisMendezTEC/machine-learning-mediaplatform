@@ -29,7 +29,9 @@ func NewScheduler(q *queue.Queue, reg *Registry, db *sql.DB) *Scheduler {
 func (s *Scheduler) Run(ctx context.Context) {
 	log.Println("[scheduler] started")
 	evictTicker := time.NewTicker(10 * time.Second)
+	stuckTicker := time.NewTicker(30 * time.Second)
 	defer evictTicker.Stop()
+	defer stuckTicker.Stop()
 
 	for {
 		select {
@@ -38,12 +40,16 @@ func (s *Scheduler) Run(ctx context.Context) {
 			return
 
 		case <-evictTicker.C:
-			// Evict workers without a recent heartbeat.
+			// Evict workers without a recent heartbeat and reclaim their jobs.
 			evicted := s.registry.EvictStale()
 			for _, id := range evicted {
 				log.Printf("[scheduler] evicted stale worker: %s", id)
 				s.reclaimWorkerJobs(ctx, id)
 			}
+
+		case <-stuckTicker.C:
+			// Mark jobs that have been running for too long as failed.
+			s.reclaimStuckJobs(ctx)
 
 		default:
 			// Try to dispatch a job.
@@ -128,12 +134,12 @@ func (s *Scheduler) sendToWorker(ctx context.Context, worker *models.WorkerInfo,
 }
 
 // reclaimWorkerJobs re-enqueues all ASSIGNED or RUNNING jobs
-// from a worker that stopped responding.
+// from a worker that stopped responding back into the Redis queue.
 func (s *Scheduler) reclaimWorkerJobs(ctx context.Context, workerID string) {
 	rows, err := s.db.QueryContext(ctx,
 		`UPDATE jobs SET status='pending', worker_id=NULL
 		 WHERE worker_id=$1 AND status IN ('assigned','running')
-		 RETURNING id`,
+		 RETURNING id, file_path, operation, priority, retries, max_retries`,
 		workerID,
 	)
 	if err != nil {
@@ -142,12 +148,34 @@ func (s *Scheduler) reclaimWorkerJobs(ctx context.Context, workerID string) {
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var id string
-		rows.Scan(&id)
-		log.Printf("[scheduler] reclaimed job %s from dead worker %s", id, workerID)
+		job := &models.Job{}
+		if err := rows.Scan(&job.ID, &job.FilePath, &job.Operation, &job.Priority, &job.Retries, &job.MaxRetries); err != nil {
+			continue
+		}
+		log.Printf("[scheduler] reclaimed job %s from dead worker %s — re-enqueuing", job.ID, workerID)
+		if err := s.queue.Enqueue(ctx, job); err != nil {
+			log.Printf("[scheduler] re-enqueue failed for reclaimed job %s: %v", job.ID, err)
+		}
 	}
-	// Jobs return to pending in DB; the client can resubmit them
-	// or the system can have a recovery loop that re-enqueues them.
+}
+
+// reclaimStuckJobs marks as failed any job that has been in 'running' state
+// for longer than 15 minutes — these are jobs whose worker silently dropped them.
+func (s *Scheduler) reclaimStuckJobs(ctx context.Context) {
+	result, err := s.db.ExecContext(ctx,
+		`UPDATE jobs
+		 SET status='failed',
+		     error_msg='job timed out: worker did not report completion within 15 minutes'
+		 WHERE status='running'
+		   AND started_at < NOW() - INTERVAL '15 minutes'`,
+	)
+	if err != nil {
+		log.Printf("[scheduler] stuck-job reclaim failed: %v", err)
+		return
+	}
+	if n, _ := result.RowsAffected(); n > 0 {
+		log.Printf("[scheduler] marked %d stuck running job(s) as failed", n)
+	}
 }
 
 // requeueJob puts a job back in Redis.

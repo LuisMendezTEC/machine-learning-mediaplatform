@@ -73,8 +73,11 @@ services:
       REDIS_ADDR: redis:6379
       REDIS_PASSWORD: ""
       PORT: "8080"
+      DATASET_PATH: /app/dataset/files
     ports:
       - "8080:8080"
+    volumes:
+      - ./dataset:/app/dataset
     depends_on:
       postgres:
         condition: service_healthy
@@ -93,6 +96,7 @@ services:
       WORKER_POOL_SIZE: "4"
       COORDINATOR_URL: http://coordinator:8080
       MINIO_ENDPOINT: minio:9000
+      MINIO_PUBLIC_ENDPOINT: localhost:9000
       MINIO_ACCESS_KEY: minioadmin
       MINIO_SECRET_KEY: minioadmin
       MINIO_BUCKET: results
@@ -113,6 +117,7 @@ services:
       WORKER_POOL_SIZE: "4"
       COORDINATOR_URL: http://coordinator:8080
       MINIO_ENDPOINT: minio:9000
+      MINIO_PUBLIC_ENDPOINT: localhost:9000
       MINIO_ACCESS_KEY: minioadmin
       MINIO_SECRET_KEY: minioadmin
       MINIO_BUCKET: results
@@ -133,6 +138,7 @@ services:
       WORKER_POOL_SIZE: "4"
       COORDINATOR_URL: http://coordinator:8080
       MINIO_ENDPOINT: minio:9000
+      MINIO_PUBLIC_ENDPOINT: localhost:9000
       MINIO_ACCESS_KEY: minioadmin
       MINIO_SECRET_KEY: minioadmin
       MINIO_BUCKET: results
