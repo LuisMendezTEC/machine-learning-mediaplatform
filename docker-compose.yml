@@ -61,6 +61,8 @@ services:
       GF_SECURITY_ADMIN_PASSWORD: admin
     volumes:
       - grafana_data:/var/lib/grafana
+      - ./infra/grafana/provisioning:/etc/grafana/provisioning
+      - ./infra/grafana/dashboards:/var/lib/grafana/dashboards
 
   coordinator:
     build:
@@ -71,8 +73,11 @@ services:
       REDIS_ADDR: redis:6379
       REDIS_PASSWORD: ""
       PORT: "8080"
+      DATASET_PATH: /app/dataset/files
     ports:
       - "8080:8080"
+    volumes:
+      - ./dataset:/app/dataset
     depends_on:
       postgres:
         condition: service_healthy
@@ -91,9 +96,12 @@ services:
       WORKER_POOL_SIZE: "4"
       COORDINATOR_URL: http://coordinator:8080
       MINIO_ENDPOINT: minio:9000
+      MINIO_PUBLIC_ENDPOINT: localhost:9000
       MINIO_ACCESS_KEY: minioadmin
       MINIO_SECRET_KEY: minioadmin
       MINIO_BUCKET: results
+    volumes:
+      - ./dataset:/app/dataset:ro
     depends_on:
       - coordinator
 
@@ -109,9 +117,12 @@ services:
       WORKER_POOL_SIZE: "4"
       COORDINATOR_URL: http://coordinator:8080
       MINIO_ENDPOINT: minio:9000
+      MINIO_PUBLIC_ENDPOINT: localhost:9000
       MINIO_ACCESS_KEY: minioadmin
       MINIO_SECRET_KEY: minioadmin
       MINIO_BUCKET: results
+    volumes:
+      - ./dataset:/app/dataset:ro
     depends_on:
       - coordinator
 
@@ -127,9 +138,21 @@ services:
       WORKER_POOL_SIZE: "4"
       COORDINATOR_URL: http://coordinator:8080
       MINIO_ENDPOINT: minio:9000
+      MINIO_PUBLIC_ENDPOINT: localhost:9000
       MINIO_ACCESS_KEY: minioadmin
       MINIO_SECRET_KEY: minioadmin
       MINIO_BUCKET: results
+    volumes:
+      - ./dataset:/app/dataset:ro
+    depends_on:
+      - coordinator
+
+  dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile.dashboard
+    ports:
+      - "5173:80"
     depends_on:
       - coordinator
 

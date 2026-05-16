@@ -47,7 +47,7 @@ VIDEO_FORMATS=("mp4" "mkv" "avi" "mov")
 AUDIO_FORMATS=("mp3" "wav" "aac" "flac" "ogg")
 
 echo "Generando videos cortos (5s)..."
-for i in $(seq 1 24); do
+for i in $(seq 1 35); do
   for fmt in "${VIDEO_FORMATS[@]}"; do
     make_video "video_short_${i}_${fmt}" 5 640 360 "$fmt"
     TOTAL=$((TOTAL+1))
@@ -55,7 +55,7 @@ for i in $(seq 1 24); do
 done
 
 echo "Generando videos medios (30s)..."
-for i in $(seq 1 16); do
+for i in $(seq 1 24); do
   for fmt in "${VIDEO_FORMATS[@]}"; do
     make_video "video_medium_${i}_${fmt}" 30 1280 720 "$fmt"
     TOTAL=$((TOTAL+1))
@@ -63,7 +63,7 @@ for i in $(seq 1 16); do
 done
 
 echo "Generando videos largos (60s)..."
-for i in $(seq 1 10); do
+for i in $(seq 1 15); do
   for fmt in "${VIDEO_FORMATS[@]}"; do
     make_video "video_long_${i}_${fmt}" 60 1280 720 "$fmt"
     TOTAL=$((TOTAL+1))
@@ -72,7 +72,7 @@ done
 
 echo "Generando audios cortos (5s)..."
 FREQS=(220 330 440 550 660)
-for i in $(seq 1 15); do
+for i in $(seq 1 22); do
   for fmt in "${AUDIO_FORMATS[@]}"; do
     freq="${FREQS[$((RANDOM % 5))]}"
     make_audio "audio_short_${i}_${fmt}" 5 "$freq" "$fmt"
@@ -89,11 +89,32 @@ for i in $(seq 1 15); do
   done
 done
 
+echo "Generando audios largos (60s)..."
+for i in $(seq 1 8); do
+  for fmt in "${AUDIO_FORMATS[@]}"; do
+    freq="${FREQS[$((RANDOM % 5))]}"
+    make_audio "audio_long_${i}_${fmt}" 60 "$freq" "$fmt"
+    TOTAL=$((TOTAL+1))
+  done
+done
+
 echo ""
 echo "Generados $TOTAL archivos en $OUT_DIR"
 
 echo "Construyendo manifest.json..."
-python3 - <<PYEOF
+
+# Try to find Python - handle Windows where python3 may not exist
+PYTHON_CMD=""
+if command -v python3 &> /dev/null; then
+  PYTHON_CMD="python3"
+elif command -v python &> /dev/null; then
+  PYTHON_CMD="python"
+else
+  echo "ERROR: Python no encontrado. Por favor instala Python 3 y añádelo al PATH."
+  exit 1
+fi
+
+$PYTHON_CMD - <<PYEOF
 import os, json, mimetypes, pathlib
 
 files_dir = "$OUT_DIR"

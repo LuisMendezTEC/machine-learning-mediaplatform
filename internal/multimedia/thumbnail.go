@@ -1,5 +1,5 @@
 // internal/multimedia/thumbnail.go
-// FFmpeg wrapper: captura un fotograma JPEG del segundo 5 de un video.
+// FFmpeg wrapper: captura un fotograma JPEG del primer segundo de un video.
 // Si el archivo es audio, genera una imagen de waveform.
 package multimedia
 
@@ -7,30 +7,31 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 	"os/exec"
 )
 
-// Thumbnail extrae un JPEG del segundo 5 de inputPath.
-// Para archivos de audio genera un waveform PNG.
-// El callback recibe 100 al completar.
+// Thumbnail extracts a JPEG frame from inputPath.
+// For audio files it generates a waveform PNG instead.
+// The callback receives 100 on completion.
 func Thumbnail(ctx context.Context, inputPath string, cb progressFn) (string, error) {
 	out := outputPath(inputPath, ".jpg")
 	log.Printf("[thumbnail] %s → %s", inputPath, out)
 
-	// Intenta capturar un fotograma de video.
+	// Grab the first available video frame (no fixed seek so it works for any length).
+	// scale=320:-2 keeps aspect ratio and rounds height to the nearest even number.
 	args := []string{
 		"-y",
-		"-ss", "00:00:05",
 		"-i", inputPath,
 		"-frames:v", "1",
 		"-q:v", "2",
-		"-vf", "scale=320:-1",
+		"-vf", "scale=320:-2",
 		out,
 	}
 
 	cmd := exec.CommandContext(ctx, "ffmpeg", args...)
 	if out2, err := cmd.CombinedOutput(); err != nil {
-		// Falló el modo video — intenta waveform para archivos de audio.
+		// Video frame failed — try waveform (works for audio streams).
 		log.Printf("[thumbnail] video frame failed (%v), trying waveform", err)
 		log.Printf("[thumbnail] ffmpeg output: %s", string(out2))
 
@@ -43,8 +44,14 @@ func Thumbnail(ctx context.Context, inputPath string, cb progressFn) (string, er
 		}
 		waveCmd := exec.CommandContext(ctx, "ffmpeg", waveArgs...)
 		if waveOut, waveErr := waveCmd.CombinedOutput(); waveErr != nil {
-			return "", fmt.Errorf("thumbnail fallido (video y waveform): %w — %s", waveErr, string(waveOut))
+			return "", fmt.Errorf("thumbnail failed (video and waveform): %w — %s", waveErr, string(waveOut))
 		}
+	}
+
+	// Guard: ffmpeg can exit 0 but write no frames (e.g. empty file).
+	fi, statErr := os.Stat(out)
+	if statErr != nil || fi.Size() == 0 {
+		return "", fmt.Errorf("thumbnail: ffmpeg produced no output for %s", inputPath)
 	}
 
 	if cb != nil {

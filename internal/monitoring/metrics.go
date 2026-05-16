@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"time"
 	"os"
+	"sync"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
@@ -67,7 +68,12 @@ var JobDuration = promauto.NewHistogramVec(prometheus.HistogramOpts{
 
 // ── Inicialización ───────────────────────────────────────────────────────────
 
-var workerID string
+var (
+	workerID string
+	lastCPU  float64
+	lastMem  float64
+	statsMu  sync.RWMutex
+)
 
 // Init registra el worker ID y arranca el loop de recolección de métricas del SO.
 // Llama esto una vez desde main() antes de servir /metrics.
@@ -79,7 +85,7 @@ func Init(id string) {
 
 // collectLoop muestrea métricas del SO cada 5 segundos y actualiza los gauges.
 func collectLoop() {
-	ticker := time.NewTicker(5 * time.Second)
+	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
 
 	pid  := int32(os.Getpid())
@@ -89,28 +95,41 @@ func collectLoop() {
 	}
 
 	for range ticker.C {
-		// CPU del proceso
+		var currentCPU, currentMem float64
+
+		// CPU del host (no solo del proceso, ya que FFmpeg corre como subprocess)
+		if pcts, err := cpu.Percent(0, false); err == nil && len(pcts) > 0 {
+			workerCPUPercent.WithLabelValues(workerID).Set(pcts[0])
+			currentCPU = pcts[0]
+		}
+
+		// Memoria del proceso
 		if proc != nil {
-			if pct, err := proc.CPUPercent(); err == nil {
-				workerCPUPercent.WithLabelValues(workerID).Set(pct)
-			}
-			// Memoria del proceso
 			if mi, err := proc.MemoryInfo(); err == nil {
 				workerMemMB.WithLabelValues(workerID).Set(float64(mi.RSS) / 1024 / 1024)
-			}
-		} else {
-			// Fallback: CPU promedio del host
-			if pcts, err := cpu.Percent(0, false); err == nil && len(pcts) > 0 {
-				workerCPUPercent.WithLabelValues(workerID).Set(pcts[0])
 			}
 		}
 
 		// Memoria del host
 		if vm, err := mem.VirtualMemory(); err == nil {
 			hostMemPercent.WithLabelValues(workerID).Set(vm.UsedPercent)
+			currentMem = vm.UsedPercent
 		}
 
 		// Goroutines del proceso
 		workerGoroutines.WithLabelValues(workerID).Set(float64(runtime.NumGoroutine()))
+
+		// Actualizar estado global para GetSystemStats
+		statsMu.Lock()
+		lastCPU = currentCPU
+		lastMem = currentMem
+		statsMu.Unlock()
 	}
+}
+
+// GetSystemStats returns the current CPU and memory usage percentages.
+func GetSystemStats() (cpuPercent, memPercent float64) {
+	statsMu.RLock()
+	defer statsMu.RUnlock()
+	return lastCPU, lastMem
 }

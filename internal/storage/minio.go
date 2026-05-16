@@ -10,16 +10,12 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"time"
 
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
 )
 
-const (
-	defaultBucket = "results"
-	urlExpiry     = 7 * 24 * time.Hour
-)
+const defaultBucket = "results"
 
 // MinIOClient encapsula el cliente de MinIO con helpers de gestión de bucket.
 type MinIOClient struct {
@@ -116,14 +112,13 @@ func (m *MinIOClient) Upload(ctx context.Context, jobID, localPath string) (stri
 		return "", fmt.Errorf("put object: %w", err)
 	}
 
-	presigned, err := m.client.PresignedGetObject(ctx, m.bucket, objectName, urlExpiry, nil)
-	if err != nil {
-		direct := fmt.Sprintf("http://%s/%s/%s",
-			getEnv("MINIO_ENDPOINT", "minio:9000"), m.bucket, objectName)
-		log.Printf("[minio] presign falló, usando URL directa: %v", err)
-		return direct, nil
-	}
-	return presigned.String(), nil
+	// The bucket has a public read policy, so a direct URL is sufficient and
+	// avoids the SignatureDoesNotMatch error that occurs when a presigned URL
+	// is generated against the internal hostname (minio:9000) but accessed via
+	// the public hostname (localhost:9000) — the signature covers the host.
+	pubEndpoint := getEnv("MINIO_PUBLIC_ENDPOINT", getEnv("MINIO_ENDPOINT", "minio:9000"))
+	directURL := fmt.Sprintf("http://%s/%s/%s", pubEndpoint, m.bucket, objectName)
+	return directURL, nil
 }
 
 // Ping verifica la conectividad con MinIO.
