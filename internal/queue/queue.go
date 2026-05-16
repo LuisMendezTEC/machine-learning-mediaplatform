@@ -44,6 +44,12 @@ func (q *Queue) Ping(ctx context.Context) error {
 	return q.client.Ping(ctx).Err()
 }
 
+// StreamLen returns the number of messages in a stream (pending + unread).
+// Used by the coordinator to report queue depth to the dashboard.
+func (q *Queue) StreamLen(ctx context.Context, stream string) (int64, error) {
+	return q.client.XLen(ctx, stream).Result()
+}
+
 // Enqueue adds a job to the appropriate priority stream
 func (q *Queue) Enqueue(ctx context.Context, job *models.Job) error {
 	data, err := json.Marshal(job)

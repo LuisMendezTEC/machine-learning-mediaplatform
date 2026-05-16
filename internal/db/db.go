@@ -50,6 +50,13 @@ func Migrate(db *sql.DB) error {
 		last_seen    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 	);
 
+	CREATE TABLE IF NOT EXISTS worker_registry (
+		id          TEXT PRIMARY KEY,
+		hostname    TEXT NOT NULL,
+		status      TEXT NOT NULL DEFAULT 'idle',
+		last_seen   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+	);
+
 	CREATE INDEX IF NOT EXISTS idx_jobs_status   ON jobs(status);
 	CREATE INDEX IF NOT EXISTS idx_jobs_worker   ON jobs(worker_id);
 	CREATE INDEX IF NOT EXISTS idx_jobs_priority ON jobs(priority DESC);
@@ -86,7 +93,7 @@ func ListJobs(db *sql.DB, status string) ([]*models.Job, error) {
 		query += " WHERE status=$1"
 		args = append(args, status)
 	}
-	query += " ORDER BY created_at DESC LIMIT 200"
+	query += " ORDER BY created_at DESC LIMIT 2000"
 	rows, err := db.Query(query, args...)
 	if err != nil {
 		return nil, err
@@ -125,9 +132,18 @@ func scanJob(row interface {
 	Scan(...any) error
 }) (*models.Job, error) {
 	j := &models.Job{}
-	return j, row.Scan(
+	var workerID, errorMsg, resultURL sql.NullString
+	err := row.Scan(
 		&j.ID, &j.FilePath, &j.Operation, &j.Status, &j.Priority,
-		&j.WorkerID, &j.Progress, &j.ErrorMsg, &j.ResultURL,
+		&workerID, &j.Progress, &errorMsg, &resultURL,
 		&j.Retries, &j.MaxRetries, &j.CreatedAt, &j.StartedAt, &j.CompletedAt,
 	)
+	if err != nil {
+		return nil, err
+	}
+	j.WorkerID = workerID.String
+	j.ErrorMsg = errorMsg.String
+	j.ResultURL = resultURL.String
+	return j, nil
 }
+

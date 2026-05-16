@@ -35,7 +35,7 @@ func main() {
 	log.Println("[coordinator] queue ready")
 
 	// ── Inicializar componentes ────────────────────────────────────────────
-	registry := coordinator.NewRegistry()
+	registry := coordinator.NewRegistry(database)
 	hub := coordinator.NewHub()
 	scheduler := coordinator.NewScheduler(q, registry, database)
 	api := coordinator.NewAPI(q, registry, hub, database)
@@ -44,10 +44,21 @@ func main() {
 	hub.StartBroadcastLoop(func() coordinator.SystemSnapshot {
 		jobs, _ := db.ListJobs(database, "")
 		stats, _ := db.GetStats(database)
+
+		// Fetch live queue depths from Redis
+		high, _ := q.StreamLen(ctx, queue.StreamHigh)
+		normal, _ := q.StreamLen(ctx, queue.StreamNormal)
+		low, _ := q.StreamLen(ctx, queue.StreamLow)
+
 		return coordinator.SystemSnapshot{
 			Workers: registry.All(),
 			Jobs:    jobs,
 			Stats:   stats,
+			QueueDepth: coordinator.QueueDepthSnapshot{
+				High:   int(high),
+				Normal: int(normal),
+				Low:    int(low),
+			},
 		}
 	})
 

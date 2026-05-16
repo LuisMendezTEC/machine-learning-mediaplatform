@@ -44,4 +44,6 @@ prometheus_data/
 grafana_data/
 
 # Project Guide
-GUIDE.md
+
+
+dataset/files/

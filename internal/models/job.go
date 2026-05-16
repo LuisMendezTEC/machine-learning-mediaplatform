@@ -18,6 +18,7 @@ const (
 	OpConvert      Operation = "convert"
 	OpExtractAudio Operation = "extract_audio"
 	OpThumbnail    Operation = "thumbnail"
+	OpConvertAudio Operation = "convert_audio"
 )
 
 type Job struct {
