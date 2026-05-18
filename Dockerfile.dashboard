@@ -1,8 +1,8 @@
 # Stage 1: build
 FROM node:20-alpine AS builder
 WORKDIR /app
-COPY dashboard/package.json ./
-RUN npm install
+COPY dashboard/package.json dashboard/package-lock.json ./
+RUN npm ci
 COPY dashboard/ .
 # Point the WS URL at the coordinator inside Docker
 ENV VITE_WS_URL=ws://localhost:8080/ws

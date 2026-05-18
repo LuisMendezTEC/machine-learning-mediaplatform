@@ -8,6 +8,8 @@
 *.so
 *.dylib
 
+/dashboard/node_modules
+
 # Test binary, built with `go test -c`
 *.test
 
@@ -34,6 +36,10 @@ Thumbs.db
 # VS Code
 .vscode/
 *.code-workspace
+
+# Node.js dependencies
+node_modules/
+
 
 # Docker / Persistence
 .docker/
