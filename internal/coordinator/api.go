@@ -39,6 +39,15 @@ func (a *API) Router() http.Handler {
 	mux.HandleFunc("GET /jobs", a.listJobs)
 	mux.HandleFunc("GET /jobs/{id}", a.getJob)
 
+	// Cases (NEW)
+	mux.HandleFunc("POST /cases", a.createCase)
+	mux.HandleFunc("GET /cases", a.listCases)
+	mux.HandleFunc("GET /cases/{id}", a.getCase)
+	mux.HandleFunc("GET /cases/{id}/report", a.getCaseReport)
+
+	// Findings (NEW)
+	mux.HandleFunc("POST /findings", a.submitFinding)
+
 	// Workers
 	mux.HandleFunc("POST /workers/register", a.registerWorker)
 	mux.HandleFunc("POST /workers/{id}/heartbeat", a.workerHeartbeat)
@@ -219,7 +228,7 @@ func (a *API) jobProgress(w http.ResponseWriter, r *http.Request) {
 	} else {
 		a.db.Exec(`UPDATE jobs SET progress=$1 WHERE id=$2`, payload.Progress, id)
 	}
-	
+
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -250,6 +259,187 @@ func (a *API) jobFail(w http.ResponseWriter, r *http.Request) {
 	)
 	log.Printf("[api] job %s failed: %s", id, payload.ErrorMsg)
 	w.WriteHeader(http.StatusOK)
+}
+
+// ── Case handlers ─────────────────────────────────────────────────────────────
+
+func (a *API) createCase(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Name        string   `json:"name"`
+		Description string   `json:"description"`
+		Priority    int      `json:"priority"`
+		Files       []string `json:"files"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+
+	// Create case
+	case_ := &models.Case{
+		ID:          uuid.New().String(),
+		Name:        req.Name,
+		Description: req.Description,
+		Status:      "queued",
+		Priority:    req.Priority,
+		RiskScore:   0,
+		CreatedAt:   time.Now(),
+	}
+	if case_.Priority == 0 {
+		case_.Priority = 5
+	}
+
+	if err := db.InsertCase(a.db, case_); err != nil {
+		log.Printf("[api] insert case: %v", err)
+		http.Error(w, "db error", http.StatusInternalServerError)
+		return
+	}
+
+	// Create jobs for each file, detecting operation by extension
+	var jobs []*models.Job
+	for _, filePath := range req.Files {
+		op := detectOperation(filePath)
+		job := &models.Job{
+			ID:         uuid.New().String(),
+			FilePath:   filePath,
+			Operation:  op,
+			Status:     models.StatusPending,
+			Priority:   req.Priority,
+			MaxRetries: 3,
+			CreatedAt:  time.Now(),
+			CaseID:     case_.ID,
+		}
+		if err := db.InsertJob(a.db, job); err != nil {
+			log.Printf("[api] insert job: %v", err)
+			continue
+		}
+		if err := a.queue.Enqueue(r.Context(), job); err != nil {
+			log.Printf("[api] enqueue: %v", err)
+			continue
+		}
+		jobs = append(jobs, job)
+	}
+
+	log.Printf("[api] case created: %s with %d jobs", case_.ID, len(jobs))
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"case": case_,
+		"jobs": jobs,
+	})
+}
+
+func (a *API) listCases(w http.ResponseWriter, r *http.Request) {
+	status := r.URL.Query().Get("status")
+	cases, err := db.ListCases(a.db, status)
+	if err != nil {
+		http.Error(w, "db error", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(cases)
+}
+
+func (a *API) getCase(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	case_, err := db.GetCase(a.db, id)
+	if err != nil {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+
+	// Get all jobs for this case
+	jobs, err := db.ListJobs(a.db, "")
+	if err != nil {
+		http.Error(w, "db error", http.StatusInternalServerError)
+		return
+	}
+	var caseJobs []*models.Job
+	for _, j := range jobs {
+		if j.CaseID == id {
+			caseJobs = append(caseJobs, j)
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"case": case_,
+		"jobs": caseJobs,
+	})
+}
+
+func (a *API) getCaseReport(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	case_, err := db.GetCase(a.db, id)
+	if err != nil {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+
+	// Get all findings for this case
+	findings, err := db.GetFindingsByCase(a.db, id)
+	if err != nil {
+		http.Error(w, "db error", http.StatusInternalServerError)
+		return
+	}
+
+	// Group findings by type
+	grouped := make(map[string][]*models.Finding)
+	for _, f := range findings {
+		grouped[f.WorkerType] = append(grouped[f.WorkerType], f)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"case":             case_,
+		"findings_total":   len(findings),
+		"findings_by_type": grouped,
+		"generated_at":     time.Now().Format(time.RFC3339),
+	})
+}
+
+func (a *API) submitFinding(w http.ResponseWriter, r *http.Request) {
+	var f models.Finding
+	if err := json.NewDecoder(r.Body).Decode(&f); err != nil {
+		http.Error(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+
+	f.ID = uuid.New().String()
+	f.CreatedAt = time.Now()
+
+	if err := db.InsertFinding(a.db, &f); err != nil {
+		log.Printf("[api] insert finding: %v", err)
+		http.Error(w, "db error", http.StatusInternalServerError)
+		return
+	}
+
+	log.Printf("[api] finding submitted: %s category=%s confidence=%.2f", f.ID, f.Category, f.Confidence)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(f)
+}
+
+// ── Helper functions ──────────────────────────────────────────────────────────
+
+func detectOperation(filePath string) models.Operation {
+	extensions := map[string]models.Operation{
+		".txt":  models.OpAnalyzeText,
+		".json": models.OpAnalyzeText,
+		".jpg":  models.OpAnalyzeImage,
+		".jpeg": models.OpAnalyzeImage,
+		".png":  models.OpAnalyzeImage,
+		".webp": models.OpAnalyzeImage,
+		".mp3":  models.OpAnalyzeAudio,
+		".wav":  models.OpAnalyzeAudio,
+		".ogg":  models.OpAnalyzeAudio,
+		".m4a":  models.OpAnalyzeAudio,
+	}
+	ext := strings.ToLower(filepath.Ext(filePath))
+	if op, ok := extensions[ext]; ok {
+		return op
+	}
+	return models.OpConvert // default fallback
 }
 
 // ── File upload ───────────────────────────────────────────────────────────────

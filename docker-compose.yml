@@ -156,6 +156,52 @@ services:
     depends_on:
       - coordinator
 
+  # NEW: Python Workers for ML Analysis (Week 1 stubs)
+  text-worker-1:
+    image: python:3.11-slim
+    working_dir: /app
+    environment:
+      WORKER_ID: text-worker-1
+      COORDINATOR_URL: http://coordinator:8080
+      DATABASE_URL: postgres://media:media@postgres:5432/mediaplatform?sslmode=disable
+      WORKER_POOL_SIZE: "2"
+    volumes:
+      - ./dataset:/app/dataset:ro
+    command: python -c "print('text-worker-1 placeholder - will be replaced with real implementation in Week 2')"
+    depends_on:
+      - coordinator
+      - postgres
+
+  image-worker-1:
+    image: python:3.11-slim
+    working_dir: /app
+    environment:
+      WORKER_ID: image-worker-1
+      COORDINATOR_URL: http://coordinator:8080
+      DATABASE_URL: postgres://media:media@postgres:5432/mediaplatform?sslmode=disable
+      WORKER_POOL_SIZE: "2"
+    volumes:
+      - ./dataset:/app/dataset:ro
+    command: python -c "print('image-worker-1 placeholder - will be replaced with real implementation in Week 2')"
+    depends_on:
+      - coordinator
+      - postgres
+
+  audio-worker-1:
+    image: python:3.11-slim
+    working_dir: /app
+    environment:
+      WORKER_ID: audio-worker-1
+      COORDINATOR_URL: http://coordinator:8080
+      DATABASE_URL: postgres://media:media@postgres:5432/mediaplatform?sslmode=disable
+      WORKER_POOL_SIZE: "1"
+    volumes:
+      - ./dataset:/app/dataset:ro
+    command: python -c "print('audio-worker-1 placeholder - will be replaced with real implementation in Week 2')"
+    depends_on:
+      - coordinator
+      - postgres
+
 volumes:
   redis_data:
   pg_data:

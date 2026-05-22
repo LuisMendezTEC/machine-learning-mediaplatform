@@ -19,6 +19,10 @@ const (
 	OpExtractAudio Operation = "extract_audio"
 	OpThumbnail    Operation = "thumbnail"
 	OpConvertAudio Operation = "convert_audio"
+	// ML Analysis operations (new)
+	OpAnalyzeText  Operation = "analyze_text"
+	OpAnalyzeImage Operation = "analyze_image"
+	OpAnalyzeAudio Operation = "analyze_audio"
 )
 
 type Job struct {
@@ -38,6 +42,30 @@ type Job struct {
 	CompletedAt *time.Time `json:"completed_at,omitempty"`
 	Retries     int        `json:"retries"`
 	MaxRetries  int        `json:"max_retries"`
+	CaseID      string     `json:"case_id,omitempty"` // NEW: link to parent case
+}
+
+type Case struct {
+	ID          string     `json:"id"`
+	Name        string     `json:"name"`
+	Description string     `json:"description"`
+	Status      string     `json:"status"` // queued, running, completed, failed
+	Priority    int        `json:"priority"`
+	RiskScore   float64    `json:"risk_score"`
+	CreatedAt   time.Time  `json:"created_at"`
+	CompletedAt *time.Time `json:"completed_at,omitempty"`
+}
+
+type Finding struct {
+	ID         string                 `json:"id"`
+	CaseID     string                 `json:"case_id"`
+	JobID      string                 `json:"job_id"`
+	WorkerType string                 `json:"worker_type"` // text, image, audio
+	Category   string                 `json:"category"`    // keyword, sentiment, violence, etc
+	Confidence float64                `json:"confidence"`  // 0.0 - 1.0
+	RiskLevel  string                 `json:"risk_level"`  // low, medium, high, critical
+	Evidence   map[string]interface{} `json:"evidence"`    // text_fragment, timestamp, bounding_box, etc
+	CreatedAt  time.Time              `json:"created_at"`
 }
 
 type WorkerInfo struct {
