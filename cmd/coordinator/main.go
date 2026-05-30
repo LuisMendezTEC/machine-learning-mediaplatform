@@ -43,6 +43,7 @@ func main() {
 	// ── WebSocket broadcast loop ───────────────────────────────────────────
 	hub.StartBroadcastLoop(func() coordinator.SystemSnapshot {
 		jobs, _ := db.ListJobs(database, "")
+		cases, _ := db.ListCases(database, "")
 		stats, _ := db.GetStats(database)
 
 		// Fetch live queue depths from Redis
@@ -53,6 +54,7 @@ func main() {
 		return coordinator.SystemSnapshot{
 			Workers: registry.All(),
 			Jobs:    jobs,
+			Cases:   cases,
 			Stats:   stats,
 			QueueDepth: coordinator.QueueDepthSnapshot{
 				High:   int(high),

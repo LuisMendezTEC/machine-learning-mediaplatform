@@ -21,6 +21,7 @@ type QueueDepthSnapshot struct {
 type SystemSnapshot struct {
 	Workers    interface{}        `json:"workers"`
 	Jobs       interface{}        `json:"jobs"`
+	Cases      interface{}        `json:"cases"`
 	QueueDepth QueueDepthSnapshot `json:"queue_depth"`
 	Stats      interface{}        `json:"stats"`
 }

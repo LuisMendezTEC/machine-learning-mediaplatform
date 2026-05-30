@@ -244,6 +244,10 @@ func (a *API) jobComplete(w http.ResponseWriter, r *http.Request) {
 		payload.ResultURL, now, id,
 	)
 	log.Printf("[api] job %s completed, result: %s", id, payload.ResultURL)
+	// After marking job complete, check if the parent case should be closed
+	if j, err := db.GetJob(a.db, id); err == nil {
+		go a.maybeCloseCase(j.CaseID)
+	}
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -258,7 +262,85 @@ func (a *API) jobFail(w http.ResponseWriter, r *http.Request) {
 		payload.ErrorMsg, id,
 	)
 	log.Printf("[api] job %s failed: %s", id, payload.ErrorMsg)
+	if j, err := db.GetJob(a.db, id); err == nil {
+		go a.maybeCloseCase(j.CaseID)
+	}
 	w.WriteHeader(http.StatusOK)
+}
+
+// maybeCloseCase checks whether all jobs for a case are finished and closes the case.
+func (a *API) maybeCloseCase(caseID string) {
+	if caseID == "" {
+		return
+	}
+	// Get all jobs for the case
+	jobs, err := db.ListJobs(a.db, "")
+	if err != nil {
+		log.Printf("[api] maybeCloseCase list jobs: %v", err)
+		return
+	}
+	hasJobs := false
+	for _, j := range jobs {
+		if j.CaseID != caseID {
+			continue
+		}
+		hasJobs = true
+		st := strings.ToLower(string(j.Status))
+		if st != string(models.StatusCompleted) && st != string(models.StatusFailed) {
+			// Found a job still in progress
+			return
+		}
+	}
+	if !hasJobs {
+		// No jobs associated; nothing to do
+		return
+	}
+
+	// All jobs are in final state -> compute risk_score from findings
+	findings, err := db.GetFindingsByCase(a.db, caseID)
+	var riskScore float64
+	if err == nil && len(findings) > 0 {
+		weight := func(level string) float64 {
+			switch strings.ToLower(level) {
+			case "critical":
+				return 1.0
+			case "high":
+				return 0.75
+			case "medium":
+				return 0.5
+			default:
+				return 0.25
+			}
+		}
+		var sum float64
+		for _, fi := range findings {
+			sum += fi.Confidence * weight(fi.RiskLevel)
+		}
+		avg := sum / float64(len(findings))
+		riskScore = avg * 10.0
+	} else {
+		riskScore = 0
+	}
+
+	now := time.Now()
+	if err := db.UpdateCaseStatus(a.db, caseID, "completed", &riskScore, &now); err != nil {
+		log.Printf("[api] update case completed: %v", err)
+		return
+	}
+
+	// Broadcast case completed event
+	snap := SystemSnapshot{
+		Workers:    nil,
+		Jobs:       nil,
+		QueueDepth: QueueDepthSnapshot{},
+		Stats: map[string]interface{}{
+			"event":      "case_completed",
+			"case_id":    caseID,
+			"risk_score": riskScore,
+		},
+	}
+	a.hub.Broadcast(snap)
+	log.Printf("[api] case %s marked completed risk_score=%.2f", caseID, riskScore)
 }
 
 // ── Case handlers ─────────────────────────────────────────────────────────────
@@ -405,8 +487,30 @@ func (a *API) submitFinding(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Basic validation
+	if f.CaseID == "" || f.JobID == "" || f.WorkerType == "" {
+		http.Error(w, "missing required fields (case_id, job_id, worker_type)", http.StatusBadRequest)
+		return
+	}
+
+	// Check case exists
+	caseObj, err := db.GetCase(a.db, f.CaseID)
+	if err != nil {
+		http.Error(w, "case not found", http.StatusNotFound)
+		return
+	}
+
+	// Check job exists
+	if _, err := db.GetJob(a.db, f.JobID); err != nil {
+		http.Error(w, "job not found", http.StatusNotFound)
+		return
+	}
+
 	f.ID = uuid.New().String()
 	f.CreatedAt = time.Now()
+	if f.RiskLevel == "" {
+		f.RiskLevel = "low"
+	}
 
 	if err := db.InsertFinding(a.db, &f); err != nil {
 		log.Printf("[api] insert finding: %v", err)
@@ -414,7 +518,50 @@ func (a *API) submitFinding(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("[api] finding submitted: %s category=%s confidence=%.2f", f.ID, f.Category, f.Confidence)
+	// Recalculate case risk score: weighted average of confidences
+	findings, err := db.GetFindingsByCase(a.db, f.CaseID)
+	if err == nil && len(findings) > 0 {
+		weight := func(level string) float64 {
+			switch strings.ToLower(level) {
+			case "critical":
+				return 1.0
+			case "high":
+				return 0.75
+			case "medium":
+				return 0.5
+			default:
+				return 0.25
+			}
+		}
+		var sum float64
+		for _, fi := range findings {
+			sum += fi.Confidence * weight(fi.RiskLevel)
+		}
+		avg := sum / float64(len(findings))
+		riskScore := avg * 10.0 // scale 0..10
+		// Update case risk_score (keep existing status)
+		if err := db.UpdateCaseStatus(a.db, f.CaseID, caseObj.Status, &riskScore, nil); err != nil {
+			log.Printf("[api] update case risk: %v", err)
+		}
+	}
+
+	// Emit WebSocket event for critical findings
+	if strings.ToLower(f.RiskLevel) == "critical" {
+		snap := SystemSnapshot{
+			Workers:    nil,
+			Jobs:       nil,
+			QueueDepth: QueueDepthSnapshot{},
+			Stats: map[string]interface{}{
+				"event":    "finding",
+				"severity": "critical",
+				"case_id":  f.CaseID,
+				"finding":  f,
+			},
+		}
+		a.hub.Broadcast(snap)
+	}
+
+	log.Printf("[api] finding submitted: %s case=%s category=%s confidence=%.2f", f.ID, f.CaseID, f.Category, f.Confidence)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(f)
