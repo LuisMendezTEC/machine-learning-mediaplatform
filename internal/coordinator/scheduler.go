@@ -66,17 +66,24 @@ func (s *Scheduler) Run(ctx context.Context) {
 
 // dispatch takes a job from the queue and assigns it to the best available worker.
 func (s *Scheduler) dispatch(ctx context.Context) error {
-	worker := s.registry.LeastLoaded()
-	if worker == nil {
-		return fmt.Errorf("no workers available")
-	}
-
+	// 1. Dequeue job first so we know what operation we need to process
 	job, msgID, err := s.queue.Dequeue(ctx, "coordinator")
 	if err != nil {
 		return queue.ErrNoMessages
 	}
 	if job == nil {
 		return queue.ErrNoMessages
+	}
+
+	// 2. Find a compatible worker for this job's operation
+	worker := s.registry.LeastLoaded(job.Operation)
+	if worker == nil {
+		// Re-enqueue the job without incrementing retries so another dispatch can try later when a worker is available
+		if err := s.queue.Enqueue(ctx, job); err != nil {
+			log.Printf("[scheduler] re-enqueue failed for job %s: %v", job.ID, err)
+		}
+		s.queue.Ack(ctx, queue.StreamForPriority(job.Priority), msgID)
+		return fmt.Errorf("no compatible workers available for operation %s", job.Operation)
 	}
 
 	log.Printf("[scheduler] assigning job %s (op: %s) to worker %s", job.ID, job.Operation, worker.ID)

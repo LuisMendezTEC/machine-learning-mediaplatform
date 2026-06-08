@@ -89,6 +89,8 @@ func Migrate(db *sql.DB) error {
 	CREATE INDEX IF NOT EXISTS idx_findings_case  ON findings(case_id);
 	CREATE INDEX IF NOT EXISTS idx_findings_risk  ON findings(risk_level);
 	CREATE INDEX IF NOT EXISTS idx_cases_status   ON cases(status);
+
+	ALTER TABLE jobs ADD COLUMN IF NOT EXISTS case_id TEXT REFERENCES cases(id);
 	`)
 	return err
 }

@@ -1,5 +1,6 @@
 package main
 
+// aqui es donde se genera el json de reporteria.
 import (
 	"bytes"
 	"encoding/json"

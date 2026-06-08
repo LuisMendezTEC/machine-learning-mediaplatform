@@ -3,6 +3,7 @@ package coordinator
 import (
 	"database/sql"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
@@ -84,12 +85,15 @@ func (r *Registry) Heartbeat(id string, cpu, mem float64, activeJobs int) bool {
 	return true
 }
 
-func (r *Registry) LeastLoaded() *models.WorkerInfo {
+func (r *Registry) LeastLoaded(op models.Operation) *models.WorkerInfo {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	var best *models.WorkerInfo
 	for _, w := range r.workers {
 		if !r.isAlive(w) {
+			continue
+		}
+		if !isCompatible(w.ID, op) {
 			continue
 		}
 		if best == nil {
@@ -103,6 +107,24 @@ func (r *Registry) LeastLoaded() *models.WorkerInfo {
 		}
 	}
 	return best
+}
+
+func isCompatible(workerID string, op models.Operation) bool {
+	wLower := strings.ToLower(workerID)
+	opLower := strings.ToLower(string(op))
+
+	if strings.Contains(opLower, "text") {
+		return strings.Contains(wLower, "text")
+	}
+	if strings.Contains(opLower, "image") {
+		return strings.Contains(wLower, "image")
+	}
+	if strings.Contains(opLower, "audio") {
+		return strings.Contains(wLower, "audio")
+	}
+
+	// Fallback for standard multimedia operations (convert, thumbnail, etc.)
+	return !strings.Contains(wLower, "text") && !strings.Contains(wLower, "image") && !strings.Contains(wLower, "audio")
 }
 
 func (r *Registry) All() []*models.WorkerInfo {
