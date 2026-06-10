@@ -71,7 +71,6 @@ func (a *API) Router() http.Handler {
 }
 
 // ── Job handlers ─────────────────────────────────────────────────────────────
-
 func (a *API) submitJob(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		FilePath  string           `json:"file_path"`
@@ -83,17 +82,38 @@ func (a *API) submitJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 1. PRIMERO: Crear un caso automático para que la llave foránea no falle
+	caseID := uuid.New().String()
+	caseObj := &models.Case{
+		ID:          caseID,
+		Name:        "Análisis Individual Automático",
+		Description: "Generado automáticamente por carga manual",
+		Status:      "pending",
+		Priority:    req.Priority,
+		RiskScore:   0,
+		CreatedAt:   time.Now(),
+	}
+	if caseObj.Priority == 0 {
+		caseObj.Priority = 5
+	}
+	
+	if err := db.InsertCase(a.db, caseObj); err != nil {
+		log.Printf("[api] insert auto-case: %v", err)
+		http.Error(w, "db error creating case", http.StatusInternalServerError)
+		return
+	}
+
+	// 2. SEGUNDO: Insertar el trabajo con CaseID y FileID
 	job := &models.Job{
 		ID:         uuid.New().String(),
+		CaseID:     caseID,              // <-- Enlace al caso recién creado
+		FileID:     uuid.New().String(), // <-- Generamos el FileID faltante
 		FilePath:   req.FilePath,
 		Operation:  req.Operation,
 		Priority:   req.Priority,
 		Status:     models.StatusPending,
 		MaxRetries: 3,
 		CreatedAt:  time.Now(),
-	}
-	if job.Priority == 0 {
-		job.Priority = 5 // default: normal
 	}
 
 	if err := db.InsertJob(a.db, job); err != nil {
@@ -107,7 +127,7 @@ func (a *API) submitJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("[api] job submitted: %s op=%s priority=%d", job.ID, job.Operation, job.Priority)
+	log.Printf("[api] job submitted: %s op=%s priority=%d case=%s", job.ID, job.Operation, job.Priority, caseID)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(job)
