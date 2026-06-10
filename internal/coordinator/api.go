@@ -3,6 +3,7 @@ package coordinator
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -38,6 +39,7 @@ func (a *API) Router() http.Handler {
 	mux.HandleFunc("POST /batch", a.submitBatch)
 	mux.HandleFunc("GET /jobs", a.listJobs)
 	mux.HandleFunc("GET /jobs/{id}", a.getJob)
+	mux.HandleFunc("GET /jobs/{id}/findings", a.getJobFindings)
 
 	// Cases (NEW)
 	mux.HandleFunc("POST /cases", a.createCase)
@@ -143,24 +145,65 @@ func (a *API) submitBatch(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid body", http.StatusBadRequest)
 		return
 	}
+
+	if len(reqs) == 0 {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode([]*models.Job{})
+		return
+	}
+
+	// 1. Create a single case to represent the batch
+	caseID := uuid.New().String()
+	priority := reqs[0].Priority
+	if priority == 0 {
+		priority = 5
+	}
+	caseObj := &models.Case{
+		ID:          caseID,
+		Name:        "Análisis de Lote Automático",
+		Description: fmt.Sprintf("Generado automáticamente por carga manual de %d archivos", len(reqs)),
+		Status:      "pending",
+		Priority:    priority,
+		RiskScore:   0,
+		CreatedAt:   time.Now(),
+	}
+	if err := db.InsertCase(a.db, caseObj); err != nil {
+		log.Printf("[api] insert batch auto-case: %v", err)
+		http.Error(w, "db error creating case", http.StatusInternalServerError)
+		return
+	}
+
 	var jobs []*models.Job
 	for _, req := range reqs {
 		job := &models.Job{
-			ID: uuid.New().String(), FilePath: req.FilePath,
-			Operation: req.Operation, Priority: req.Priority,
-			Status: models.StatusPending, MaxRetries: 3, CreatedAt: time.Now(),
+			ID:         uuid.New().String(),
+			CaseID:     caseID,
+			FileID:     uuid.New().String(),
+			FilePath:   req.FilePath,
+			Operation:  req.Operation,
+			Priority:   req.Priority,
+			Status:     models.StatusPending,
+			MaxRetries: 3,
+			CreatedAt:  time.Now(),
 		}
 		if job.Priority == 0 {
 			job.Priority = 5
 		}
-		db.InsertJob(a.db, job)
-		a.queue.Enqueue(r.Context(), job)
+		if err := db.InsertJob(a.db, job); err != nil {
+			log.Printf("[api] insert batch job failed: %v", err)
+			continue
+		}
+		if err := a.queue.Enqueue(r.Context(), job); err != nil {
+			log.Printf("[api] enqueue batch job failed: %v", err)
+			continue
+		}
 		jobs = append(jobs, job)
 	}
-	log.Printf("[api] batch submitted: %d jobs", len(jobs))
+	log.Printf("[api] batch submitted: %d jobs in case %s", len(jobs), caseID)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(jobs)
+	_ = json.NewEncoder(w).Encode(jobs)
 }
 
 func (a *API) listJobs(w http.ResponseWriter, r *http.Request) {
@@ -183,6 +226,18 @@ func (a *API) getJob(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(job)
+}
+
+func (a *API) getJobFindings(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	findings, err := db.GetFindingsByJob(a.db, id)
+	if err != nil {
+		log.Printf("[api] get job findings: %v", err)
+		http.Error(w, "db error", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(findings)
 }
 
 // ── Worker handlers ───────────────────────────────────────────────────────────
@@ -401,6 +456,10 @@ func (a *API) createCase(w http.ResponseWriter, r *http.Request) {
 	var jobs []*models.Job
 	for _, filePath := range req.Files {
 		op := detectOperation(filePath)
+		if op == "" {
+			log.Printf("[api] unrecognized file extension for %s, skipping", filePath)
+			continue
+		}
 		job := &models.Job{
 			ID:         uuid.New().String(),
 			FilePath:   filePath,
@@ -469,7 +528,6 @@ func (a *API) getCase(w http.ResponseWriter, r *http.Request) {
 		"jobs": caseJobs,
 	})
 }
-
 func (a *API) getCaseReport(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	case_, err := db.GetCase(a.db, id)
@@ -491,12 +549,24 @@ func (a *API) getCaseReport(w http.ResponseWriter, r *http.Request) {
 		grouped[f.WorkerType] = append(grouped[f.WorkerType], f)
 	}
 
+	// Get all jobs for this case to link file names
+	jobs, err := db.ListJobs(a.db, "")
+	var caseJobs []*models.Job
+	if err == nil {
+		for _, j := range jobs {
+			if j.CaseID == id {
+				caseJobs = append(caseJobs, j)
+			}
+		}
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"case":             case_,
 		"findings_total":   len(findings),
 		"findings_by_type": grouped,
 		"generated_at":     time.Now().Format(time.RFC3339),
+		"jobs":             caseJobs,
 	})
 }
 
@@ -606,7 +676,7 @@ func detectOperation(filePath string) models.Operation {
 	if op, ok := extensions[ext]; ok {
 		return op
 	}
-	return models.OpConvert // default fallback
+	return "" // unrecognized extension
 }
 
 // ── File upload ───────────────────────────────────────────────────────────────
@@ -783,10 +853,23 @@ func (a *API) listFiles(w http.ResponseWriter, r *http.Request) {
 var videoExts = map[string]bool{
 	".mp4": true, ".mkv": true, ".avi": true, ".mov": true, ".webm": true,
 }
+var imageExts = map[string]bool{
+	".jpg": true, ".jpeg": true, ".png": true, ".webp": true, ".gif": true,
+}
+var textExts = map[string]bool{
+	".txt": true, ".json": true, ".csv": true, ".xml": true,
+}
 
 func guessFileType(filename string) string {
-	if videoExts[strings.ToLower(filepath.Ext(filename))] {
+	ext := strings.ToLower(filepath.Ext(filename))
+	if videoExts[ext] {
 		return "video"
+	}
+	if imageExts[ext] {
+		return "image"
+	}
+	if textExts[ext] {
+		return "text"
 	}
 	return "audio"
 }

@@ -97,11 +97,15 @@ func Migrate(db *sql.DB) error {
 
 // InsertJob stores a new job in PostgreSQL.
 func InsertJob(db *sql.DB, job *models.Job) error {
+	var caseID sql.NullString
+	if job.CaseID != "" {
+		caseID = sql.NullString{String: job.CaseID, Valid: true}
+	}
 	_, err := db.Exec(`
 		INSERT INTO jobs (id, file_id, file_path, operation, status, priority, max_retries, created_at, case_id)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
 		job.ID, job.FileID, job.FilePath, job.Operation,
-		job.Status, job.Priority, job.MaxRetries, job.CreatedAt, job.CaseID,
+		job.Status, job.Priority, job.MaxRetries, job.CreatedAt, caseID,
 	)
 	return err
 }
@@ -247,6 +251,26 @@ func InsertFinding(db *sql.DB, f *models.Finding) error {
 // GetFindingsByCase returns all findings for a case.
 func GetFindingsByCase(db *sql.DB, caseID string) ([]*models.Finding, error) {
 	rows, err := db.Query(`SELECT id, case_id, job_id, worker_type, category, confidence, risk_level, evidence, created_at FROM findings WHERE case_id=$1 ORDER BY created_at DESC`, caseID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	findings := make([]*models.Finding, 0)
+	for rows.Next() {
+		var f models.Finding
+		var evidenceJSON []byte
+		err := rows.Scan(&f.ID, &f.CaseID, &f.JobID, &f.WorkerType, &f.Category, &f.Confidence, &f.RiskLevel, &evidenceJSON, &f.CreatedAt)
+		if err == nil {
+			json.Unmarshal(evidenceJSON, &f.Evidence)
+			findings = append(findings, &f)
+		}
+	}
+	return findings, nil
+}
+
+// GetFindingsByJob returns all findings for a job.
+func GetFindingsByJob(db *sql.DB, jobID string) ([]*models.Finding, error) {
+	rows, err := db.Query(`SELECT id, case_id, job_id, worker_type, category, confidence, risk_level, evidence, created_at FROM findings WHERE job_id=$1 ORDER BY created_at DESC`, jobID)
 	if err != nil {
 		return nil, err
 	}

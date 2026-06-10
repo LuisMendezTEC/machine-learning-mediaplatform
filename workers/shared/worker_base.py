@@ -3,6 +3,7 @@ import time
 import logging
 import threading
 import requests
+import psutil
 from fastapi import FastAPI, BackgroundTasks, Response, status
 from pydantic import BaseModel
 
@@ -78,11 +79,22 @@ class WorkerBase:
 
     def _heartbeat_loop(self):
         url = f"{self.coordinator_url}/workers/{self.worker_id}/heartbeat"
+        try:
+            p = psutil.Process()
+            p.cpu_percent() # Seed
+        except Exception:
+            p = None
         while True:
             try:
+                if p:
+                    cpu = p.cpu_percent() / psutil.cpu_count()
+                    mem = p.memory_percent()
+                else:
+                    cpu = 0.0
+                    mem = 0.0
                 payload = {
-                    "cpu_percent": 0.0,
-                    "mem_percent": 0.0,
+                    "cpu_percent": float(cpu),
+                    "mem_percent": float(mem),
                     "active_jobs": self.active_jobs
                 }
                 requests.post(url, json=payload, timeout=2)

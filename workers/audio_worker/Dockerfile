@@ -15,7 +15,7 @@ RUN pip install --no-cache-dir -r /app/workers/shared/requirements.txt
 RUN pip install --no-cache-dir -r /app/workers/audio_worker/requirements.txt
 
 # Pre-download Whisper model during build (non-fatal if network fails)
-RUN python -c "import whisper; whisper.load_model('base')" || echo "Warning: Whisper model download failed"
+RUN python -c "import whisper; whisper.load_model('small')" || echo "Warning: Whisper model download failed"
 
 # Pre-download transformers model during build (non-fatal if network fails)
 RUN python -c "from transformers import pipeline; pipeline('sentiment-analysis', model='lxyuan/distilbert-base-multilingual-cased-sentiments-student')" || echo "Warning: sentiment model download failed"

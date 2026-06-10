@@ -105,3 +105,16 @@
     font-size: 11px;
     color: var(--muted);
 }
+
+.fileName {
+    font-size: 11.5px;
+    color: var(--muted);
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.fileHighlight {
+    color: var(--accent);
+    font-weight: 500;
+}

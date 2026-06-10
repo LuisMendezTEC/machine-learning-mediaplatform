@@ -22,7 +22,11 @@ RUN python -c "from ultralytics import YOLO; YOLO('yolov8n.pt')" || echo "Warnin
 COPY workers/shared /app/workers/shared
 COPY workers/image_worker /app/workers/image_worker
 
+# Pre-download specialized threat detection model during build
+RUN python -c "import requests; r = requests.get('https://huggingface.co/Subh775/Threat-Detection-YOLOv8n/resolve/main/weights/best.pt'); r.raise_for_status(); open('/app/workers/image_worker/threats_yolov8n.pt', 'wb').write(r.content)" || echo "Warning: Threat model download failed"
+
 ENV PYTHONPATH=/app
 EXPOSE 8090
 
 CMD ["python", "workers/image_worker/main.py"]
+

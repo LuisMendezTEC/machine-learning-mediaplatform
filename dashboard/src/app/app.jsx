@@ -3,7 +3,6 @@ import { useSystemState } from '../hooks/useSystemState'
 import WorkerCard from '../components/WorkerCard'
 import JobTable from '../components/JobTable'
 import StatsBar from '../components/StatsBar'
-import QueueDepth from '../components/QueueDepth'
 import SubmitJobPanel from '../components/SubmitJobPanel'
 import BatchPanel from '../components/BatchPanel'
 import JobHistory from '../components/JobHistory'
@@ -66,7 +65,6 @@ export default function App() {
                                     <p className={styles.empty}>No workers registered yet. Run <code>make up</code> to start workers.</p>
                                 )}
                                 {workers.map(w => <WorkerCard key={w.id} worker={w} />)}
-                                <QueueDepth queue_depth={queue_depth} />
                             </div>
                         </section>
 

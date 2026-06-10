@@ -24,7 +24,7 @@ services:
     volumes:
       - pg_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U media"]
+      test: ["CMD-SHELL", "pg_isready -U media -d mediaplatform"]
       interval: 5s
       timeout: 3s
       retries: 5
@@ -84,68 +84,6 @@ services:
       redis:
         condition: service_healthy
 
-  worker-1:
-    build:
-      context: .
-      dockerfile: Dockerfile.worker
-    environment:
-      REDIS_ADDR: redis:6379
-      REDIS_PASSWORD: ""
-      DATABASE_URL: postgres://media:media@postgres:5432/mediaplatform?sslmode=disable
-      WORKER_ID: worker-1
-      WORKER_POOL_SIZE: "4"
-      COORDINATOR_URL: http://coordinator:8080
-      MINIO_ENDPOINT: minio:9000
-      MINIO_PUBLIC_ENDPOINT: localhost:9000
-      MINIO_ACCESS_KEY: minioadmin
-      MINIO_SECRET_KEY: minioadmin
-      MINIO_BUCKET: results
-    volumes:
-      - ./dataset:/app/dataset:ro
-    depends_on:
-      - coordinator
-
-  worker-2:
-    build:
-      context: .
-      dockerfile: Dockerfile.worker
-    environment:
-      REDIS_ADDR: redis:6379
-      REDIS_PASSWORD: ""
-      DATABASE_URL: postgres://media:media@postgres:5432/mediaplatform?sslmode=disable
-      WORKER_ID: worker-2
-      WORKER_POOL_SIZE: "4"
-      COORDINATOR_URL: http://coordinator:8080
-      MINIO_ENDPOINT: minio:9000
-      MINIO_PUBLIC_ENDPOINT: localhost:9000
-      MINIO_ACCESS_KEY: minioadmin
-      MINIO_SECRET_KEY: minioadmin
-      MINIO_BUCKET: results
-    volumes:
-      - ./dataset:/app/dataset:ro
-    depends_on:
-      - coordinator
-
-  worker-3:
-    build:
-      context: .
-      dockerfile: Dockerfile.worker
-    environment:
-      REDIS_ADDR: redis:6379
-      REDIS_PASSWORD: ""
-      DATABASE_URL: postgres://media:media@postgres:5432/mediaplatform?sslmode=disable
-      WORKER_ID: worker-3
-      WORKER_POOL_SIZE: "4"
-      COORDINATOR_URL: http://coordinator:8080
-      MINIO_ENDPOINT: minio:9000
-      MINIO_PUBLIC_ENDPOINT: localhost:9000
-      MINIO_ACCESS_KEY: minioadmin
-      MINIO_SECRET_KEY: minioadmin
-      MINIO_BUCKET: results
-    volumes:
-      - ./dataset:/app/dataset:ro
-    depends_on:
-      - coordinator
 
   dashboard:
     build:

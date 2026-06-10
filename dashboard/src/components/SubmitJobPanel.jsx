@@ -5,24 +5,28 @@ import styles from './SubmitJobPanel.module.css'
 const DEFAULT_PRIORITY = 5
 const PRIORITY_OPTIONS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
 
-const VIDEO_EXTS = new Set(['mp4', 'mkv', 'avi', 'mov', 'webm'])
-const MEDIA_EXTS = new Set(['mp4', 'mkv', 'avi', 'mov', 'webm', 'mp3', 'wav', 'aac', 'flac', 'ogg'])
+const TEXT_EXTS = new Set(['txt', 'json'])
+const IMAGE_EXTS = new Set(['jpg', 'jpeg', 'png', 'webp'])
+const AUDIO_EXTS = new Set(['mp3', 'wav', 'ogg', 'm4a'])
 
-const VIDEO_OPS = [
-    { value: 'convert',       label: 'Convert to MP4' },
-    { value: 'extract_audio', label: 'Extract Audio (MP3)' },
-    { value: 'thumbnail',     label: 'Generate Thumbnail' },
-]
-
-const AUDIO_OPS = [
-    { value: 'extract_audio', label: 'Re-encode to MP3' },
-    { value: 'convert_audio', label: 'Convert to WAV' },
-    { value: 'thumbnail',     label: 'Generate Waveform' },
-]
+const OPERATIONS = {
+    text: [
+        { value: 'analyze_text', label: 'Analyze Text' }
+    ],
+    image: [
+        { value: 'analyze_image', label: 'Analyze Image' }
+    ],
+    audio: [
+        { value: 'analyze_audio', label: 'Analyze Audio' }
+    ]
+}
 
 function getType(name) {
     const ext = name.toLowerCase().split('.').pop()
-    return VIDEO_EXTS.has(ext) ? 'video' : 'audio'
+    if (TEXT_EXTS.has(ext)) return 'text'
+    if (IMAGE_EXTS.has(ext)) return 'image'
+    if (AUDIO_EXTS.has(ext)) return 'audio'
+    return 'unknown'
 }
 
 function getExt(name) {
@@ -30,15 +34,7 @@ function getExt(name) {
 }
 
 function getOps(name, type) {
-    const ext = getExt(name)
-    if (type === 'video') {
-        return VIDEO_OPS.filter(op => !(op.value === 'convert' && ext === 'mp4'))
-    }
-    return AUDIO_OPS.filter(op => {
-        if (op.value === 'extract_audio' && ext === 'mp3') return false
-        if (op.value === 'convert_audio' && ext === 'wav') return false
-        return true
-    })
+    return OPERATIONS[type] || []
 }
 
 function fmtSize(bytes) {
@@ -63,7 +59,7 @@ export default function SubmitJobPanel() {
         const picked = Array.from(e.target.files)
             .filter(f => {
                 const ext = f.name.toLowerCase().split('.').pop()
-                return MEDIA_EXTS.has(ext)
+                return TEXT_EXTS.has(ext) || IMAGE_EXTS.has(ext) || AUDIO_EXTS.has(ext)
             })
             .map(f => {
                 const type = getType(f.name)
@@ -73,7 +69,7 @@ export default function SubmitJobPanel() {
                     name: f.name,
                     size: f.size,
                     type,
-                    operation: ops[0].value,
+                    operation: ops[0]?.value || '',
                     priority: DEFAULT_PRIORITY,
                     file: f,
                 }
@@ -145,7 +141,7 @@ export default function SubmitJobPanel() {
                     ref={inputRef}
                     type="file"
                     multiple
-                    accept=".mp4,.mkv,.avi,.mov,.webm,.mp3,.wav,.aac,.flac,.ogg"
+                    accept=".txt,.json,.jpg,.jpeg,.png,.webp,.mp3,.wav,.ogg,.m4a"
                     className={styles.hiddenInput}
                     onChange={handleFileChange}
                 />
@@ -180,9 +176,11 @@ export default function SubmitJobPanel() {
                                 <div key={f.id} className={styles.fileTableRow}>
                                     <span
                                         className={styles.typeBadge}
-                                        style={f.type === 'video'
+                                        style={f.type === 'text'
                                             ? { background: '#1e3a5f', color: '#60a5fa' }
-                                            : { background: '#1c2e1c', color: '#4ade80' }}
+                                            : f.type === 'image'
+                                                ? { background: '#2d1e3f', color: '#d8b4fe' }
+                                                : { background: '#1c2e1c', color: '#4ade80' }}
                                     >
                                         {f.type}
                                     </span>

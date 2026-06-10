@@ -5,7 +5,7 @@ ON CONFLICT (id) DO NOTHING;
 
 -- 2. Crear el trabajo (agregando file_id)
 INSERT INTO jobs (id, case_id, file_id, file_path, operation, status, priority, progress) 
-VALUES ('job-falso-456', 'caso-prueba-123', 'file-falso-789', '/app/dataset/files/audio_falso.mp3', 'extract_audio', 'completed', 5, 100) 
+VALUES ('job-falso-456', 'caso-prueba-123', 'file-falso-789', '/app/dataset/files/audio_falso.mp3', 'analyze_audio', 'completed', 5, 100) 
 ON CONFLICT (id) DO NOTHING;
 
 -- 3. Crear el hallazgo

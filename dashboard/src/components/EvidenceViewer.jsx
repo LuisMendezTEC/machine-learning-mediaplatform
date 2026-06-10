@@ -1,5 +1,18 @@
 import styles from './EvidenceViewer.module.css'
 
+const IMAGE_LABELS = {
+    person: 'Persona Detectada',
+    knife: 'Arma Blanca (Cuchillo)',
+    gun: 'Arma de Fuego (Pistola / Fusil)',
+    handgun: 'Arma de Fuego (Pistola)',
+    pistol: 'Arma de Fuego (Pistola)',
+    rifle: 'Arma de Fuego (Fusil)',
+    firearm: 'Arma de Fuego',
+    weapon: 'Arma / Peligro',
+    explosion: 'Peligro de Explosión / Incendio',
+    grenade: 'Granada / Artefacto Explosivo',
+}
+
 export default function EvidenceViewer({ workerType, evidence }) {
     if (!evidence) return <span className={styles.muted}>Sin evidencia registrada</span>
 
@@ -16,15 +29,17 @@ export default function EvidenceViewer({ workerType, evidence }) {
                 </div>
             )
         case 'image':
+            const labelKey = evidence.label?.toLowerCase() || ''
+            const translatedLabel = IMAGE_LABELS[labelKey] || `Objeto: ${evidence.label || 'Desconocido'}`
             return (
                 <div className={styles.box}>
                     <div className={styles.imagePlaceholder}>
                         <span className={styles.icon}>🖼️</span>
-                        Detección en imagen
+                        {translatedLabel}
                     </div>
                     {evidence.bounding_box && (
                         <code className={styles.code}>
-                            Box: [X: {evidence.bounding_box.x}, Y: {evidence.bounding_box.y}, W: {evidence.bounding_box.w}, H: {evidence.bounding_box.h}]
+                            Área Detectada: [X: {evidence.bounding_box.x}, Y: {evidence.bounding_box.y}, Ancho: {evidence.bounding_box.w}px, Alto: {evidence.bounding_box.h}px]
                         </code>
                     )}
                 </div>
@@ -39,4 +54,4 @@ export default function EvidenceViewer({ workerType, evidence }) {
         default:
             return <pre className={styles.code}>{JSON.stringify(evidence, null, 2)}</pre>
     }
-}
+}

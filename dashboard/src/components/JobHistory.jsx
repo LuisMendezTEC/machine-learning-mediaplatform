@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, Fragment } from 'react'
 import { api } from '../api'
 import styles from './JobHistory.module.css'
 
@@ -145,9 +145,8 @@ export default function JobHistory() {
                             </tr>
                         )}
                         {visible.map(job => (
-                            <>
+                            <Fragment key={job.id}>
                                 <tr
-                                    key={job.id}
                                     className={`${styles.row} ${expandedId === job.id ? styles.rowExpanded : ''}`}
                                     onClick={() => setExpandedId(expandedId === job.id ? null : job.id)}
                                     title="Click to expand details"
@@ -238,7 +237,7 @@ export default function JobHistory() {
                                         </td>
                                     </tr>
                                 )}
-                            </>
+                            </Fragment>
                         ))}
                     </tbody>
                 </table>

@@ -1,15 +1,37 @@
 import { useState, useEffect } from 'react'
+import { api } from '../api'
 import EvidenceViewer from './EvidenceViewer'
 import styles from './CaseDetail.module.css'
+
+const WORKER_NAMES = {
+    text: 'Analizador de Texto',
+    image: 'Analizador de Imagen',
+    audio: 'Analizador de Audio',
+}
+
+const CATEGORY_NAMES = {
+    sentiment: 'Tono Hostil / Negativo',
+    keyword: 'Palabra Clave Detectada',
+    weapon: 'Detección de Arma',
+    violence: 'Violencia / Agresión',
+    offensive: 'Lenguaje Ofensivo',
+    threat: 'Amenaza',
+    scam: 'Estafa / Fraude Financiero',
+}
+
+const RISK_NAMES = {
+    low: 'Bajo',
+    medium: 'Medio',
+    high: 'Alto',
+    critical: 'Crítico',
+}
 
 export default function CaseDetail({ caseId }) {
     const [report, setReport] = useState(null)
     const [loading, setLoading] = useState(true)
 
     useEffect(() => {
-        // En un entorno real esto usaría api.js, pero hacemos un fetch directo al coordinator
-        fetch(`http://localhost:8080/cases/${caseId}/report`)
-            .then(res => res.json())
+        api.getCaseReport(caseId)
             .then(data => {
                 setReport(data)
                 setLoading(false)
@@ -27,11 +49,11 @@ export default function CaseDetail({ caseId }) {
             <div className={styles.header}>
                 <div className={styles.scoreCard}>
                     <span className={styles.scoreLabel}>Riesgo Final</span>
-                    <span className={styles.scoreValue}>{report.risk_score?.toFixed(1)} / 10</span>
+                    <span className={styles.scoreValue}>{(report.case?.risk_score ?? 0).toFixed(1)} / 10</span>
                 </div>
                 <div className={styles.meta}>
                     <span>Generado: {new Date(report.generated_at).toLocaleString()}</span>
-                    <span>Total Hallazgos: {report.timeline?.length || 0}</span>
+                    <span>Total Hallazgos: {report.findings_total || 0}</span>
                 </div>
             </div>
 
@@ -42,18 +64,27 @@ export default function CaseDetail({ caseId }) {
 
                     return (
                         <div key={type} className={styles.column}>
-                            <h4 className={styles.typeTitle}>{type.toUpperCase()} WORKER</h4>
+                            <h4 className={styles.typeTitle}>{WORKER_NAMES[type] || type.toUpperCase()}</h4>
                             <div className={styles.findingsList}>
-                                {findings.map(f => (
-                                    <div key={f.id} className={styles.findingCard}>
-                                        <div className={styles.findingHeader}>
-                                            <span className={styles.category}>{f.category}</span>
-                                            <span className={`${styles.risk} ${styles[f.risk_level]}`}>{f.risk_level}</span>
+                                {findings.map(f => {
+                                    const job = report.jobs?.find(j => j.id === f.job_id)
+                                    const fileName = job?.file_path ? job.file_path.split(/[/\\]/).pop() : ''
+                                    return (
+                                        <div key={f.id} className={styles.findingCard}>
+                                            <div className={styles.findingHeader}>
+                                                <span className={styles.category}>{CATEGORY_NAMES[f.category] || f.category}</span>
+                                                <span className={`${styles.risk} ${styles[f.risk_level]}`}>{RISK_NAMES[f.risk_level] || f.risk_level}</span>
+                                            </div>
+                                            {fileName && (
+                                                <div className={styles.fileName}>
+                                                    📁 Archivo: <span className={styles.fileHighlight}>{fileName}</span>
+                                                </div>
+                                            )}
+                                            <div className={styles.confidence}>Confianza: {(f.confidence * 100).toFixed(0)}%</div>
+                                            <EvidenceViewer workerType={f.worker_type} evidence={f.evidence} />
                                         </div>
-                                        <div className={styles.confidence}>Confianza: {(f.confidence * 100).toFixed(0)}%</div>
-                                        <EvidenceViewer workerType={f.worker_type} evidence={f.evidence} />
-                                    </div>
-                                ))}
+                                    )
+                                })}
                             </div>
                         </div>
                     )
@@ -61,4 +92,4 @@ export default function CaseDetail({ caseId }) {
             </div>
         </div>
     )
-}
+}

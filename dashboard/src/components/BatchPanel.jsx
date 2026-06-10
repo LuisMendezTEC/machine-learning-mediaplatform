@@ -5,24 +5,28 @@ import styles from './BatchPanel.module.css'
 const DEFAULT_SERVER_PATH = '/app/dataset/files'
 const DEFAULT_PRIORITY = 5
 
-const VIDEO_EXTS = new Set(['mp4', 'mkv', 'avi', 'mov', 'webm'])
-const MEDIA_EXTS = new Set(['mp4', 'mkv', 'avi', 'mov', 'webm', 'mp3', 'wav', 'aac', 'flac', 'ogg'])
+const TEXT_EXTS = new Set(['txt', 'json'])
+const IMAGE_EXTS = new Set(['jpg', 'jpeg', 'png', 'webp'])
+const AUDIO_EXTS = new Set(['mp3', 'wav', 'ogg', 'm4a'])
 
-const VIDEO_OPS = [
-    { value: 'convert',       label: 'Convert to MP4',      desc: 'Re-encode as H.264 + AAC' },
-    { value: 'extract_audio', label: 'Extract Audio (MP3)',  desc: 'Strip video stream, export MP3' },
-    { value: 'thumbnail',     label: 'Generate Thumbnail',   desc: 'Capture a JPEG frame at 5 s' },
+const TEXT_OPS = [
+    { value: 'analyze_text', label: 'Analyze Text', desc: 'Extract risk categories & sentiment from text' }
+]
+
+const IMAGE_OPS = [
+    { value: 'analyze_image', label: 'Analyze Image', desc: 'Detect objects (weapons, violence) using YOLOv8' }
 ]
 
 const AUDIO_OPS = [
-    { value: 'extract_audio', label: 'Re-encode to MP3',    desc: 'Normalize audio to 192k MP3' },
-    { value: 'convert_audio', label: 'Convert to WAV',      desc: 'Export PCM 16-bit 44.1 kHz' },
-    { value: 'thumbnail',     label: 'Generate Waveform',   desc: 'Render a PNG waveform image' },
+    { value: 'analyze_audio', label: 'Analyze Audio', desc: 'Transcribe with Whisper & analyze transcript' }
 ]
 
 function getType(name) {
     const ext = name.toLowerCase().split('.').pop()
-    return VIDEO_EXTS.has(ext) ? 'video' : 'audio'
+    if (TEXT_EXTS.has(ext)) return 'text'
+    if (IMAGE_EXTS.has(ext)) return 'image'
+    if (AUDIO_EXTS.has(ext)) return 'audio'
+    return 'unknown'
 }
 
 function fmtSize(bytes) {
@@ -35,10 +39,15 @@ function fmtSize(bytes) {
 // ── Operation picker ──────────────────────────────────────────────────────────
 
 function OpPicker({ fileType, ops, value, onChange }) {
+    let title = '🎵 Audio files — choose operation'
+    if (fileType === 'text') title = '📄 Text files — choose operation'
+    else if (fileType === 'image') title = '🖼️ Image files — choose operation'
+    else if (fileType === 'video') title = '🎬 Video files — choose operation'
+
     return (
         <div className={styles.opPicker}>
             <div className={styles.opPickerTitle}>
-                {fileType === 'video' ? '🎬 Video' : '🎵 Audio'} files — choose operation
+                {title}
             </div>
             <div className={styles.opCards}>
                 {ops.map(op => (
@@ -72,8 +81,10 @@ function FileList({ files }) {
                 <div key={i} className={styles.fileRow}>
                     <span
                         className={styles.typeBadge}
-                        style={f.type === 'video'
-                            ? { background: '#1e3a5f', color: '#60a5fa' }
+                        style={f.type === 'text'
+                        ? { background: '#1e3a5f', color: '#60a5fa' }
+                        : f.type === 'image'
+                            ? { background: '#2d1e3f', color: '#d8b4fe' }
                             : { background: '#1c2e1c', color: '#4ade80' }}
                     >
                         {f.type}
@@ -93,8 +104,9 @@ export default function BatchPanel() {
     const [folderName, setFolderName] = useState('')
     const [serverPath, setServerPath] = useState(DEFAULT_SERVER_PATH)
     const [showPathEdit, setShowPathEdit] = useState(false)
-    const [videoOp, setVideoOp] = useState('convert')
-    const [audioOp, setAudioOp] = useState('extract_audio')
+    const [textOp, setTextOp] = useState('analyze_text')
+    const [imageOp, setImageOp] = useState('analyze_image')
+    const [audioOp, setAudioOp] = useState('analyze_audio')
     const [phase, setPhase] = useState('idle')   // idle | loading | busy | ok | err
     const [submitted, setSubmitted] = useState(0)
     const [errMsg, setErrMsg] = useState('')
@@ -107,13 +119,13 @@ export default function BatchPanel() {
             if (!data.files || data.files.length === 0) {
                 throw new Error('No media files found in that directory.')
             }
-            // Filter by known media extensions
+            // Filter by known media/text/image extensions
             const media = data.files.filter(f => {
                 const ext = f.filename.toLowerCase().split('.').pop()
-                return MEDIA_EXTS.has(ext)
+                return TEXT_EXTS.has(ext) || IMAGE_EXTS.has(ext) || AUDIO_EXTS.has(ext)
             })
             
-            setFiles(media.map(f => ({ name: f.filename, size: f.size_bytes, type: f.type })))
+            setFiles(media.map(f => ({ name: f.filename, size: f.size_bytes, type: getType(f.filename) })))
             setFolderName(data.folder_path)
             setPhase('idle')
             setSubmitted(0)
@@ -128,11 +140,17 @@ export default function BatchPanel() {
         setPhase('busy')
         setErrMsg('')
         try {
-            const jobs = files.map(f => ({
-                file_path: `${serverPath.replace(/\/$/, '')}/${f.name}`,
-                operation: f.type === 'video' ? videoOp : audioOp,
-                priority: DEFAULT_PRIORITY
-            }))
+            const jobs = files.map(f => {
+                let op = 'analyze_text'
+                if (f.type === 'image') op = imageOp
+                else if (f.type === 'audio') op = audioOp
+                else if (f.type === 'text') op = textOp
+                return {
+                    file_path: `${serverPath.replace(/\/$/, '')}/${f.name}`,
+                    operation: op,
+                    priority: DEFAULT_PRIORITY
+                }
+            })
 
             const result = await api.submitBatch(jobs)
             setSubmitted(Array.isArray(result) ? result.length : jobs.length)
@@ -144,7 +162,8 @@ export default function BatchPanel() {
         }
     }
 
-    const videoCount = files.filter(f => f.type === 'video').length
+    const textCount = files.filter(f => f.type === 'text').length
+    const imageCount = files.filter(f => f.type === 'image').length
     const audioCount = files.filter(f => f.type === 'audio').length
 
     return (
@@ -202,9 +221,14 @@ export default function BatchPanel() {
                     {/* Summary */}
                     <div className={styles.summary}>
                         <span className={styles.summaryTotal}>{files.length} files loaded</span>
-                        {videoCount > 0 && (
+                        {textCount > 0 && (
                             <span className={styles.summaryChip} style={{ color: '#60a5fa' }}>
-                                🎬 {videoCount} video
+                                📄 {textCount} text
+                            </span>
+                        )}
+                        {imageCount > 0 && (
+                            <span className={styles.summaryChip} style={{ color: '#d8b4fe' }}>
+                                🖼️ {imageCount} image
                             </span>
                         )}
                         {audioCount > 0 && (
@@ -216,12 +240,20 @@ export default function BatchPanel() {
 
                     {/* Operation pickers */}
                     <div className={styles.opSection}>
-                        {videoCount > 0 && (
+                        {textCount > 0 && (
                             <OpPicker
-                                fileType="video"
-                                ops={VIDEO_OPS}
-                                value={videoOp}
-                                onChange={setVideoOp}
+                                fileType="text"
+                                ops={TEXT_OPS}
+                                value={textOp}
+                                onChange={setTextOp}
+                            />
+                        )}
+                        {imageCount > 0 && (
+                            <OpPicker
+                                fileType="image"
+                                ops={IMAGE_OPS}
+                                value={imageOp}
+                                onChange={setImageOp}
                             />
                         )}
                         {audioCount > 0 && (

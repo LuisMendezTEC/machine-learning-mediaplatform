@@ -15,6 +15,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -95,12 +96,15 @@ func probeHasStream(ctx context.Context, inputPath, streamType string) bool {
 	return strings.TrimSpace(string(out)) != ""
 }
 
+var pathCounter uint64
+
 // outputPath crea una ruta de salida única en /tmp con la extensión dada.
 func outputPath(inputPath, ext string) string {
 	dir := os.TempDir()
 	base := strings.TrimSuffix(filepath.Base(inputPath), filepath.Ext(inputPath))
+	c := atomic.AddUint64(&pathCounter, 1)
 	ts := strconv.FormatInt(time.Now().UnixNano(), 36)
-	return filepath.Join(dir, fmt.Sprintf("%s_%s%s", base, ts, ext))
+	return filepath.Join(dir, fmt.Sprintf("%s_%s_%d%s", base, ts, c, ext))
 }
 
 // Convert convierte inputPath a MP4 usando H.264 + AAC.

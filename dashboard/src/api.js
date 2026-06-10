@@ -40,4 +40,11 @@ export const api = {
         }
         return r.json()
     },
+
+    getFindings: (jobId) =>
+        request('GET', `/jobs/${jobId}/findings`),
+
+    getCaseReport: (caseId) =>
+        request('GET', `/cases/${caseId}/report`),
 }
+
