@@ -7,9 +7,10 @@ import QueueDepth from '../components/QueueDepth'
 import SubmitJobPanel from '../components/SubmitJobPanel'
 import BatchPanel from '../components/BatchPanel'
 import JobHistory from '../components/JobHistory'
+import CaseList from '../components/CaseList'
 import styles from './app.module.css'
 
-const TABS = ['Monitor', 'Submit', 'History']
+const TABS = ['Monitor', 'Cases', 'Submit', 'History']
 
 function ConnectionBadge({ connected }) {
     return (
@@ -80,6 +81,20 @@ export default function App() {
                             <JobTable jobs={jobs} />
                         </section>
                     </>
+                )}
+
+                {/* ── Cases tab ── */}
+                {tab === 'Cases' && (
+                    <section className={styles.section}>
+                        <div className={styles.sectionHeader}>
+                            <h2 className={styles.sectionTitle}>Análisis de Casos</h2>
+                            <span className={styles.sectionCount}>Gestión de cargas de trabajo distribuidas</span>
+                            <button className={styles.refreshBtn} onClick={refresh} title="Refresh now">
+                                ↻ Refresh
+                            </button>
+                        </div>
+                        <CaseList />
+                    </section>
                 )}
 
                 {/* ── Submit tab ── */}

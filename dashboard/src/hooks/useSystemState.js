@@ -1,9 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { api } from '../api'
 
-// In dev (npm run dev), Vite proxies /ws → ws://localhost:8080/ws
-// In Docker (built image), nginx proxies /ws → coordinator:8080/ws
-// Either way, we always connect to /ws on the same host.
 const WS_URL = typeof import.meta !== 'undefined' && import.meta.env?.VITE_WS_URL
     ? import.meta.env.VITE_WS_URL
     : `ws://${window.location.host}/ws`
@@ -11,6 +7,7 @@ const WS_URL = typeof import.meta !== 'undefined' && import.meta.env?.VITE_WS_UR
 const EMPTY_STATE = {
     workers: [],
     jobs: [],
+    cases: [], // <- Agregado para soportar los casos
     stats: { pending: 0, assigned: 0, running: 0, completed: 0, failed: 0 },
     queue_depth: { high: 0, normal: 0, low: 0 },
 }
@@ -40,7 +37,6 @@ export function useSystemState() {
             try {
                 const data = JSON.parse(e.data)
 
-                // Filter all jobs by refresh time if refresh was clicked
                 const allJobs = Array.isArray(data.jobs) ? data.jobs : []
                 let filteredJobs = allJobs
 
@@ -51,7 +47,6 @@ export function useSystemState() {
                     })
                 }
 
-                // Calculate stats from filtered jobs only
                 const stats = {
                     pending: filteredJobs.filter(j => j.status === 'pending').length,
                     assigned: filteredJobs.filter(j => j.status === 'assigned').length,
@@ -60,8 +55,6 @@ export function useSystemState() {
                     failed: filteredJobs.filter(j => j.status === 'failed').length,
                 }
 
-                // If refresh was clicked, queue_depth should be 0 (only new jobs in queue)
-                // Otherwise use server data
                 let queue_depth = {}
                 if (refreshTimeRef.current) {
                     queue_depth = { high: 0, normal: 0, low: 0 }
@@ -74,26 +67,27 @@ export function useSystemState() {
                     }
                 }
 
-                // Filter jobs to only show active ones (pending, assigned, running)
-                // Completed and failed jobs belong in the History tab, not Live Jobs
                 const liveJobs = filteredJobs.filter(job => 
                     job.status === 'pending' || job.status === 'assigned' || job.status === 'running'
                 )
 
+                // Extraer los casos enviados por el coordinator
+                const liveCases = Array.isArray(data.cases) ? data.cases : []
+
                 setState({
                     workers: Array.isArray(data.workers) ? data.workers : [],
                     jobs: liveJobs,
+                    cases: liveCases, // <- Estado actualizado
                     stats,
                     queue_depth,
                 })
             } catch {
-                // malformed message — ignore silently
+                // ignorar errores de parseo
             }
         }
 
         ws.onclose = () => {
             setConnected(false)
-            // Reconnect after 3 seconds
             retryRef.current = setTimeout(connect, 3000)
         }
 
@@ -111,12 +105,11 @@ export function useSystemState() {
     }, [connect])
 
     const refresh = useCallback(async () => {
-        // Mark the refresh time - only show jobs created after this moment
         refreshTimeRef.current = Date.now()
-        // Clear the live jobs display, stats, and queue depth in monitor tab
         setState(prev => ({
             ...prev,
             jobs: [],
+            cases: [], // Limpiar visualmente hasta que lleguen los nuevos del WS
             stats: { pending: 0, assigned: 0, running: 0, completed: 0, failed: 0 },
             queue_depth: { high: 0, normal: 0, low: 0 },
         }))
